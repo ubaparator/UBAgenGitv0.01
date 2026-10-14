@@ -127,7 +127,7 @@ jobs:
           echo "Remote: $DEST/$(basename "$OUTPUT_FILE")" >> "$GITHUB_STEP_SUMMARY"
 
       - name: Keep artifact if remote upload is not configured
-        if: ${{ steps.remote-upload.outputs.uploaded != 'true' }}
+        if: ${{ always() && steps.remote-upload.outputs.uploaded != 'true' }}
         uses: actions/upload-artifact@v4
         with:
           name: ubagen-encode-${{ github.run_id }}
