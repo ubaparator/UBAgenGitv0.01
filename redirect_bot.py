@@ -10,6 +10,7 @@ import aiohttp
 import discord
 from discord import app_commands
 from fastapi import FastAPI, Header, HTTPException
+from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, HttpUrl
 from fastapi.responses import JSONResponse
 
@@ -30,6 +31,7 @@ intents = discord.Intents.default()
 bot = discord.Client(intents=intents)
 tree = app_commands.CommandTree(bot)
 app = FastAPI(title="UBAgen GitHub Bridge", docs_url=None, redoc_url=None)
+app.add_middleware(CORSMiddleware, allow_origins=["https://ubaparator.github.io", "http://localhost", "http://127.0.0.1:5500"], allow_credentials=False, allow_methods=["GET", "POST", "OPTIONS"], allow_headers=["Content-Type", "X-Dashboard-Key"])
 bot_task: Optional[asyncio.Task] = None
 
 
