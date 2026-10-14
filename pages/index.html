@@ -1,123 +1,204 @@
 <!doctype html>
 <html lang="tr">
 <head>
-  <meta charset="utf-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1">
-  <meta name="theme-color" content="#0a0d12">
-  <title>UBAgen Yönetim</title>
-  <style>
-    :root{color-scheme:dark;--bg:#0a0d12;--panel:#121821;--line:#263140;--text:#edf3fb;--muted:#9aa9bb;--accent:#5ee0a0;--danger:#ff7272}
-    *{box-sizing:border-box}body{margin:0;background:var(--bg);color:var(--text);font:16px/1.5 system-ui,-apple-system,Segoe UI,sans-serif}
-    main{max-width:850px;margin:auto;padding:22px 14px 50px}h1{font-size:1.7rem;margin:0}h2{font-size:1.1rem;margin:0 0 12px}.sub{color:var(--muted);margin:4px 0 18px}
-    section{background:var(--panel);border:1px solid var(--line);border-radius:16px;padding:16px;margin:14px 0}
-    label{display:block;color:var(--muted);font-size:.9rem;margin:10px 0 5px}input,select,button{width:100%;border-radius:10px;border:1px solid var(--line);padding:12px;background:#0c1118;color:var(--text);font:inherit}
-    button{background:var(--accent);color:#07120c;font-weight:750;border:0;margin-top:12px;cursor:pointer}button.secondary{background:#202b39;color:var(--text)}button:disabled{opacity:.55}
-    .grid{display:grid;grid-template-columns:1fr 1fr;gap:10px}.status{border:1px solid var(--line);border-radius:12px;padding:12px;margin-top:10px;overflow-wrap:anywhere}.muted{color:var(--muted)}.error{color:var(--danger);white-space:pre-wrap}.ok{color:var(--accent)}pre{white-space:pre-wrap;overflow-wrap:anywhere;margin:0}
-    @media(max-width:560px){.grid{grid-template-columns:1fr}main{padding:16px 10px 35px}}
-  </style>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="theme-color" content="#090d12">
+<title>UBAgen • Yönetim Paneli</title>
+<style>
+:root{color-scheme:dark;--bg:#090d12;--panel:#121923;--line:#293546;--text:#f0f5fc;--muted:#9eafc2;--accent:#61e6a5;--bad:#ff7777;--warn:#ffd27a}
+*{box-sizing:border-box}body{margin:0;background:radial-gradient(ellipse at top,#14221f 0,#090d12 55%);color:var(--text);font:16px/1.5 system-ui,-apple-system,Segoe UI,sans-serif}main{max-width:920px;margin:auto;padding:24px 14px 60px}
+header{padding:12px 2px 20px}h1{font-size:clamp(1.7rem,5vw,2.4rem);letter-spacing:-.04em;margin:0}h2{font-size:1.08rem;margin:0 0 12px}.sub{color:var(--muted);margin:6px 0 0}.pill{display:inline-flex;align-items:center;gap:7px;border:1px solid var(--line);border-radius:99px;padding:5px 10px;font-size:.82rem;color:var(--muted);margin-bottom:12px}
+section{background:rgba(18,25,35,.96);border:1px solid var(--line);border-radius:18px;padding:17px;margin:13px 0;box-shadow:0 8px 28px #0002}
+label{display:block;color:var(--muted);font-size:.9rem;margin:10px 0 5px}input,select,button{width:100%;border-radius:11px;border:1px solid var(--line);padding:12px;background:#0a1017;color:var(--text);font:inherit}input:focus,select:focus{outline:2px solid #61e6a566;border-color:var(--accent)}
+button{background:var(--accent);color:#06130c;font-weight:800;border:0;margin-top:12px;cursor:pointer}button.secondary{background:#202c3b;color:var(--text);border:1px solid #344458}button:disabled{opacity:.55;cursor:wait}
+.grid{display:grid;grid-template-columns:1fr 1fr;gap:10px}.status{border:1px solid var(--line);border-radius:12px;padding:12px;margin-top:10px;overflow-wrap:anywhere;min-height:44px}.muted{color:var(--muted)}.error{color:var(--bad);white-space:pre-wrap}.ok{color:var(--accent)}.warn{color:var(--warn)}pre{white-space:pre-wrap;overflow-wrap:anywhere;margin:0;font: .9rem/1.55 ui-monospace,SFMono-Regular,Consolas,monospace}a{color:var(--accent);overflow-wrap:anywhere}details{border-top:1px solid var(--line);padding:11px 0}details:last-child{padding-bottom:0}summary{cursor:pointer;font-weight:650}p{margin-top:8px}.small{font-size:.87rem}.hidden{display:none!important}.metric{display:grid;grid-template-columns:repeat(3,1fr);gap:8px}.metric div{background:#0b1219;border:1px solid var(--line);border-radius:12px;padding:12px}.metric strong{display:block;font-size:1.1rem}.metric span{font-size:.82rem;color:var(--muted)}
+@media(max-width:560px){main{padding:16px 10px 40px}.grid,.metric{grid-template-columns:1fr}section{padding:14px}}
+</style>
 </head>
 <body>
 <main>
-  <h1>UBAgen Yönetim</h1>
-  <p class="sub">Encode işleri • servis durumu • telefona uygun panel</p>
-  <section>
-    <h2>Bağlantı</h2>
-    <label for="api">Render servis adresi (ör. https://ubagen-github-bridge.onrender.com)</label>
-    <input id="api" inputmode="url" placeholder="https://servis-adin.onrender.com">
-    <label for="key">Yönetim anahtarı</label>
-    <input id="key" type="password" autocomplete="off" placeholder="DASHBOARD_API_KEY">
-    <div class="grid"><button id="save" class="secondary">Oturumda kullan</button><button id="refresh">Durumu yenile</button></div>
-    <p class="muted">Anahtar bu sayfada kalıcı olarak kaydedilmez; yalnızca açık oturum belleğinde tutulur.</p>
-  </section>
-  <section>
-    <h2>Encode başlat</h2>
-    <label for="video">Video için doğrudan HTTP(S) bağlantısı</label><input id="video" type="url" placeholder="https://.../video.mp4">
-    <label for="subtitle">İsteğe bağlı ASS/SRT bağlantısı</label><input id="subtitle" type="url" placeholder="https://.../subtitle.ass">
-    <label for="codec">Codec</label><select id="codec"><option value="h264">H.264</option><option value="h265">H.265</option></select>
-    <button id="encode">Encode işini gönder</button><pre id="encodeResult" class="status muted">Henüz iş gönderilmedi.</pre>
-  </section>
-  <section>
-    <h2>Canlı durum</h2><div id="health" class="status muted">Bağlantı kurulmadı.</div>
-    <h2 style="margin-top:16px">Son istekler</h2><div id="jobs" class="status muted">Henüz veri yok.</div>
-    <button id="refresh2" class="secondary">Yenile</button>
-  </section>
-  <section>
-    <h2>Sistem tanılaması</h2>
-    <p class="muted">Bağlantı, eksik ortam değişkenleri, Discord Gateway, depo hedefi ve son uygulama loglarını kontrol eder. Gizli değerleri asla göstermez.</p>
-    <button id="diagnose" class="secondary">Tüm kontrolleri çalıştır</button>
-    <pre id="diagnostics" class="status muted">Tanılama henüz çalıştırılmadı.</pre>
-    <h2 style="margin-top:16px">Son loglar / hata</h2>
-    <pre id="logs" class="status muted">Loglar henüz alınmadı.</pre>
-  </section>
-  <section>
-    <h2>Token ve izin ayarları</h2>
-    <p class="muted">Güvenlik için Discord bot tokenını veya GitHub tokenını bu web sayfasına yazma. Bunlar yalnızca ilgili servisin gizli ortam değişkenlerine girilmeli.</p>
-    <a href="https://dashboard.render.com/" target="_blank" rel="noopener">Render Environment / servis logları ↗</a><br>
-    <a href="https://github.com/ubaparator/UBAgenGitv0.01/settings/secrets/actions" target="_blank" rel="noopener">GitHub Actions Secrets ↗</a><br>
-    <a href="https://github.com/ubaparator/UBAgenGitv0.01/settings/variables/actions" target="_blank" rel="noopener">GitHub Actions Variables ↗</a><br>
-    <a href="https://github.com/ubaparator/UBAgenGitv0.01/settings/pages" target="_blank" rel="noopener">GitHub Pages ayarları ↗</a>
-    <p class="muted">Render: DISCORD_BOT_TOKEN, DASHBOARD_API_KEY, GH_TOKEN. GitHub Actions Secrets: RCLONE_CONFIG, RENDER_HEALTH_URL. Variables: RCLONE_REMOTE_PATH.</p>
-  </section>
-  <section><h2>Bilinen sorunlar ve kontroller</h2>
-    <details><summary>Discord bot çevrimdışı / slash komutları görünmüyor</summary><p>DISCORD_BOT_TOKEN doğru mu? Bot sunucuya davetli mi? Render loglarında 401/Privileged intent/Gateway hatası var mı? Uygulama açılırken komut senkronizasyonu tamamlanmış mı? Komutlar bazen Discord istemcisinde gecikmeli görünebilir.</p></details>
-    <details><summary>GitHub Actions işi başlamıyor (401/403/404)</summary><p>GH_TOKEN geçerli mi, doğru depoya erişebiliyor mu ve Contents: Read and write izni var mı? repository_dispatch event adı encode_request ile eşleşmeli. Actions bu depoda etkin olmalı.</p></details>
-    <details><summary>Video/altyazı indirilemiyor</summary><p>Bağlantı doğrudan indirilebilir ve HTTP(S) olmalı. Discord ek bağlantıları süreli olabilir; çok büyük dosyalar veya giriş isteyen sayfalar başarısız olabilir. Bu ilk sürüm magnet/torrent indirmez.</p></details>
-    <details><summary>FFmpeg / altyazı / font sorunu</summary><p>Actions logundaki ffprobe ve FFmpeg hatalarını incele. ASS dosyasının kodlaması, font ailesi ve altyazı yolundaki özel karakterler sorun çıkarabilir. Font otomatik paketleme henüz yapılmıyor.</p></details>
-    <details><summary>Rclone / Drive / MEGA / çıktı temizliği</summary><p>RCLONE_CONFIG doğru INI içeriği mi ve remote adı desteklenen backend mi? MEGA için kullanılan rclone sürümünde backend bulunmaması sorun yaratabilir. RCLONE_REMOTE_PATH yalnızca geçici klasör olmalı: temizlik görevi 2 saatten eski MP4 dosyalarını siler.</p></details>
-    <details><summary>Uyku, süre ve kota sınırları</summary><p>Render ücretsiz servisleri uyuyabilir; 10 dakikalık ping 7/24 çalışma garantisi vermez. GitHub-hosted runner süre/kota sınırlarına tabidir. Cloud Run/Google Cloud bu mimaride kullanılmıyor.</p></details>
-  </section>
-  <section><h2>GitHub Actions</h2><p class="muted">Encode ayrıntıları, FFmpeg logları ve artifact dosyaları GitHub Actions çalıştırmasında görünür.</p><a href="https://github.com/ubaparator/UBAgenGitv0.01/actions" target="_blank" rel="noopener">Actions işlerini aç ↗</a></section>
-  <p id="message" class="muted" role="status"></p>
+<header>
+  <div class="pill"><span>●</span> UBAgen / GitHub Actions / Discord</div>
+  <h1>Yönetim Paneli</h1>
+  <p class="sub">Servis bağlantısı, Discord durumu, encode işleri ve hata tanılaması.</p>
+</header>
+
+<section id="connectPanel">
+  <h2>Panele bağlan</h2>
+  <p class="muted small">Yalnızca <b>panel erişim anahtarını</b> gir. Discord bot tokenını buraya yazma; o token sunucunun gizli ortam değişkeninde kalmalıdır.</p>
+  <label for="key">Panel erişim anahtarı</label>
+  <input id="key" type="password" autocomplete="current-password" placeholder="DASHBOARD_API_KEY" aria-describedby="keyHelp">
+  <div class="grid"><button id="connect">Token ile bağlan</button><button id="disconnect" class="secondary">Bağlantıyı kes</button></div>
+  <details>
+    <summary>Servis adresini değiştir (gerekirse)</summary>
+    <label for="api">Render servis adresi</label>
+    <input id="api" inputmode="url" value="https://ubagen-github-bridge.onrender.com" placeholder="https://servis-adin.onrender.com">
+    <p class="muted small">Varsayılan adres Render servis adıyla eşleşir. Servis farklı bir URL aldıysa buradan değiştir.</p>
+  </details>
+  <p id="message" class="muted" role="status">Henüz bağlanılmadı.</p>
+</section>
+
+<section>
+  <h2>Servis durumu</h2>
+  <div class="metric">
+    <div><strong id="serviceState">—</strong><span>API servisi</span></div>
+    <div><strong id="discordState">—</strong><span>Discord Gateway</span></div>
+    <div><strong id="uptime">—</strong><span>Çalışma süresi</span></div>
+  </div>
+  <div id="health" class="status muted">Bağlanınca servis bilgileri burada görünür.</div>
+  <button id="refresh" class="secondary">Durumu yenile</button>
+</section>
+
+<section>
+  <h2>Encode başlat</h2>
+  <p class="muted small">Bu sürüm doğrudan indirilebilir HTTP(S) bağlantısı kullanır; magnet/torrent henüz desteklenmez.</p>
+  <label for="video">Video bağlantısı</label><input id="video" type="url" placeholder="https://.../video.mp4">
+  <label for="subtitle">İsteğe bağlı ASS/SRT altyazı bağlantısı</label><input id="subtitle" type="url" placeholder="https://.../subtitle.ass">
+  <label for="codec">Codec</label><select id="codec"><option value="h264">H.264</option><option value="h265">H.265</option></select>
+  <button id="encode">Encode işini gönder</button>
+  <pre id="encodeResult" class="status muted">Henüz iş gönderilmedi.</pre>
+  <h2 style="margin-top:18px">Son işler</h2>
+  <pre id="jobs" class="status muted">Henüz veri yok.</pre>
+</section>
+
+<section>
+  <h2>Sistem tanılaması</h2>
+  <p class="muted small">Discord Gateway, gerekli tokenların tanımlı olup olmadığını, depo hedefini ve son uygulama loglarını kontrol eder. Gizli değerleri göstermez.</p>
+  <button id="diagnose" class="secondary">Tüm kontrolleri çalıştır</button>
+  <pre id="diagnostics" class="status muted">Tanılama henüz çalıştırılmadı.</pre>
+  <h2 style="margin-top:18px">Son loglar / hata</h2>
+  <pre id="logs" class="status muted">Loglar henüz alınmadı.</pre>
+</section>
+
+<section>
+  <h2>Kurulum ve sorun giderme</h2>
+  <p><a href="https://dashboard.render.com/" target="_blank" rel="noopener">Render servis panelini aç ↗</a></p>
+  <p><a href="https://github.com/ubaparator/UBAgenGitv0.01/actions" target="_blank" rel="noopener">GitHub Actions işleri ve FFmpeg logları ↗</a></p>
+  <p><a href="https://github.com/ubaparator/UBAgenGitv0.01/settings/secrets/actions" target="_blank" rel="noopener">GitHub Actions Secrets ↗</a></p>
+  <p><a href="https://github.com/ubaparator/UBAgenGitv0.01/settings/pages" target="_blank" rel="noopener">GitHub Pages ayarları ↗</a></p>
+  <p class="muted small">Render → Environment: <code>DISCORD_BOT_TOKEN</code>, <code>DASHBOARD_API_KEY</code>. Encode aşamasında ayrıca <code>GH_TOKEN</code> gerekir. Actions Secrets: <code>RCLONE_CONFIG</code>, <code>RENDER_HEALTH_URL</code>. Actions Variable: <code>RCLONE_REMOTE_PATH</code>.</p>
+  <details><summary>Discord çevrimdışı veya slash komutları yok</summary><p>Render Environment içinde DISCORD_BOT_TOKEN doğru olmalı; bot Discord sunucusuna davet edilmiş olmalı. Render loglarında 401, Gateway veya slash sync hatasını kontrol et. Servis yeniden başladığında uptime sıfırlanır.</p></details>
+  <details><summary>GitHub Actions işi 401 / 403 / 404 hatası veriyor</summary><p>GH_TOKEN doğru depoya erişmeli ve repository dispatch iznine sahip olmalı. Token encode testi yapılana kadar gerekli değildir. Actions sekmesinde workflow hatasını aç.</p></details>
+  <details><summary>Video veya altyazı indirilmiyor</summary><p>Bağlantı doğrudan dosyayı indirmeli; oturum açma gerektiren sayfalar ve süresi dolan CDN bağlantıları çalışmayabilir. Büyük dosyalar runner sınırlarına takılabilir.</p></details>
+  <details><summary>FFmpeg / ASS / font hatası</summary><p>GitHub Actions logunda ilk FFmpeg hatasına bak. Bu sürüm ASS/SRT yakma yapar; fontları otomatik paketleme henüz garanti edilmez.</p></details>
+  <details><summary>Rclone / Drive / MEGA / çıktı temizliği</summary><p>RCLONE_CONFIG INI biçiminde doğru olmalı. RCLONE_REMOTE_PATH yalnızca geçici klasör olmalı; temizlik workflow'u bu klasörde 2 saatten eski MP4 dosyalarını siler. Rclone ayarı yoksa çıktı kısa ömürlü Actions artifact olarak saklanır.</p></details>
+  <details><summary>Servis uyuyor veya kota doluyor</summary><p>Render ücretsiz servisleri uyuyabilir ve GitHub Actions süre/kota sınırlarına tabidir; 7/24 çalışma garantisi yoktur. Keepalive ping uyku davranışını kesin olarak engellemez.</p></details>
+</section>
+<footer class="muted small">Güvenlik: Panel anahtarı yalnızca bu açık sayfa oturumunun belleğinde tutulur; sayfayı yenilersen tekrar girmen gerekir. Gizli tokenları sohbetlere, HTML dosyalarına veya Git deposuna commit etme.</footer>
 </main>
 <script>
 (() => {
-  let api = "", key = "";
   const $ = id => document.getElementById(id);
-  const setMessage = (s, bad=false) => { $("message").textContent=s; $("message").className=bad?"error":"muted"; };
-  const base = () => api.trim().replace(/\/$/, "");
-  async function request(path, options={}) {
-    if (!base() || !key) throw new Error("Önce servis adresini ve yönetim anahtarını gir.");
-    const response = await fetch(base()+path, { ...options, headers: { "Content-Type":"application/json", "X-Dashboard-Key":key, ...(options.headers||{}) }});
-    const data = await response.json().catch(()=>({detail:"Geçersiz sunucu yanıtı"}));
+  const DEFAULT_API = "https://ubagen-github-bridge.onrender.com";
+  let api = DEFAULT_API;
+  let key = "";
+  const setMessage = (text, bad=false) => {
+    $("message").textContent = text;
+    $("message").className = bad ? "error" : "muted";
+  };
+  const base = () => ($("api").value.trim() || DEFAULT_API).replace(/\/+$/, "");
+  async function raw(path, options={}) {
+    const headers = Object.assign({"Content-Type":"application/json"}, options.headers || {});
+    const response = await fetch(base()+path, Object.assign({}, options, {headers}));
+    const data = await response.json().catch(() => ({detail:"Sunucu geçerli JSON döndürmedi."}));
     if (!response.ok) throw new Error(data.detail || ("HTTP "+response.status));
     return data;
   }
-  $("save").onclick = () => { api=$("api").value.trim(); key=$("key").value; setMessage("Bilgiler bu açık sayfa oturumunda kullanılacak."); };
+  async function request(path, options={}) {
+    if (!key) throw new Error("Önce panel erişim anahtarını gir.");
+    const headers = Object.assign({"X-Dashboard-Key":key}, options.headers || {});
+    return raw(path, Object.assign({}, options, {headers}));
+  }
+  function duration(seconds) {
+    seconds = Math.max(0, Number(seconds)||0);
+    const d=Math.floor(seconds/86400), h=Math.floor((seconds%86400)/3600), m=Math.floor((seconds%3600)/60);
+    return (d ? d+"g " : "")+h+"s "+m+"d";
+  }
+  function renderJobs(data) {
+    const jobs = data.jobs || [];
+    $("jobs").textContent = jobs.length ? jobs.map((j,i) => (i+1)+". "+j.status+" • "+j.codec+" • "+new Date(j.requested_at*1000).toLocaleString("tr-TR")).join("\n") : "Bu servis oturumunda henüz encode isteği yok.";
+  }
   async function refresh() {
     try {
-      const health = await fetch(base()+"/health").then(r=>{if(!r.ok)throw new Error("Health HTTP "+r.status);return r.json();});
-      $("health").innerHTML = '<span class="ok">● Servis erişilebilir</span><br>Discord: '+(health.discord_ready?"bağlı":"bağlı değil")+'<br>Çalışma süresi: '+Math.floor(health.uptime_seconds/3600)+' sa '+Math.floor((health.uptime_seconds%3600)/60)+' dk<br>Yeni işler: '+(health.accepting_jobs?"açık":"kapalı");
-      const data = await request("/api/jobs");
-      $("jobs").textContent = data.jobs.length ? data.jobs.map((j,i)=>(i+1)+". "+j.status+" • "+j.codec+" • "+new Date(j.requested_at*1000).toLocaleString("tr-TR")).join("\n") : "Bu servis oturumunda henüz istek yok.";
-      setMessage("Durum güncellendi.");
-    } catch(e) { $("health").textContent="Durum alınamadı."; setMessage(e.message,true); }
-  }
-  async function diagnose() {
-    $("diagnostics").textContent="Kontroller çalışıyor...";
-    $("logs").textContent="Loglar alınıyor...";
-    try {
-      const d=await request("/api/diagnostics");
-      $("diagnostics").textContent=d.checks.map(c=>(c.ok?"✓ ":"✗ ")+c.name+": "+c.detail).join("\\n")+"\\n\\nGenel sonuç: "+(d.ok?"Kontroller başarılı":"Eksik/hatalı ayar var")+"\\nSon hata: "+d.last_error;
-      $("logs").textContent=(d.logs&&d.logs.length)?d.logs.join("\\n"):"Uygulama belleğinde henüz log yok.";
-      setMessage(d.ok?"Tanılama tamamlandı.":"Tanılama tamamlandı; başarısız kontroller var.",!d.ok);
+      const health = await raw("/health");
+      $("serviceState").textContent = health.ok ? "Çalışıyor" : "Hata";
+      $("serviceState").className = health.ok ? "ok" : "error";
+      $("discordState").textContent = health.discord_ready ? "Bağlı" : "Bağlı değil";
+      $("discordState").className = health.discord_ready ? "ok" : "warn";
+      $("uptime").textContent = duration(health.uptime_seconds);
+      $("health").textContent = "Servis: "+(health.service||"UBAgen")+"\\nYeni işler: "+(health.accepting_jobs?"açık":"kapalı")+"\\nKontrol: "+new Date().toLocaleString("tr-TR");
+      if (key) renderJobs(await request("/api/jobs"));
+      setMessage("Servis durumu yenilendi.");
     } catch(e) {
-      $("diagnostics").textContent=e.message;
-      $("logs").textContent="Loglar alınamadı.";
-      setMessage(e.message,true);
+      $("serviceState").textContent = "Erişilemiyor";
+      $("discordState").textContent = "—";
+      $("uptime").textContent = "—";
+      $("health").textContent = e.message;
+      setMessage("Bağlantı kurulamadı: "+e.message, true);
     }
   }
-  $("diagnose").onclick=diagnose;
-  $("refresh").onclick=refresh; $("refresh2").onclick=refresh;
-  $("encode").onclick=async()=>{
-    $("encode").disabled=true; $("encodeResult").textContent="İş gönderiliyor...";
-    try{
-      const body={video_url:$("video").value.trim(),subtitle_url:$("subtitle").value.trim()||null,codec:$("codec").value};
-      const result=await request("/api/encode",{method:"POST",body:JSON.stringify(body)});
-      $("encodeResult").textContent="İstek gönderildi. Codec: "+result.codec+" • Altyazı: "+(result.has_subtitle?"var":"yok")+"\nİşler için GitHub Actions sayfasını aç.";
-      setMessage("Encode isteği gönderildi.");
-    }catch(e){$("encodeResult").textContent=e.message;setMessage(e.message,true);}
-    finally{$("encode").disabled=false;}
-  };
+  async function connect() {
+    key = $("key").value.trim();
+    api = base();
+    if (!key) { setMessage("Panel erişim anahtarını gir.", true); return; }
+    $("connect").disabled = true;
+    setMessage("Servise bağlanılıyor…");
+    try {
+      const health = await raw("/health");
+      const config = await request("/api/config-check");
+      $("serviceState").textContent = "Çalışıyor";
+      $("discordState").textContent = health.discord_ready ? "Bağlı" : "Bağlı değil";
+      $("uptime").textContent = duration(health.uptime_seconds);
+      $("health").textContent = "Panel bağlantısı doğrulandı.\\nDiscord: "+(health.discord_ready?"bağlı":"henüz bağlı değil")+"\\nDepo: "+config.repository;
+      renderJobs(await request("/api/jobs"));
+      setMessage("Bağlandı. Şimdi tanılama çalıştırabilirsin.");
+      await diagnose();
+    } catch(e) {
+      key = "";
+      setMessage("Bağlantı başarısız: "+e.message, true);
+    } finally { $("connect").disabled = false; }
+  }
+  async function diagnose() {
+    $("diagnostics").textContent = "Kontroller çalışıyor…";
+    $("logs").textContent = "Loglar alınıyor…";
+    try {
+      const d = await request("/api/diagnostics");
+      $("diagnostics").textContent = d.checks.map(c => (c.ok?"✓ ":"✗ ")+c.name+": "+c.detail).join("\n")+"\n\nGenel sonuç: "+(d.ok?"Kontroller başarılı":"Eksik/hatalı ayar var")+"\nSon hata: "+d.last_error;
+      $("logs").textContent = d.logs && d.logs.length ? d.logs.join("\n") : "Uygulama belleğinde henüz log yok.";
+      setMessage(d.ok ? "Tanılama tamamlandı; tüm kontroller başarılı." : "Tanılama tamamlandı; bazı kontroller başarısız.", !d.ok);
+    } catch(e) {
+      $("diagnostics").textContent = e.message;
+      $("logs").textContent = "Loglar alınamadı.";
+      setMessage("Tanılama başarısız: "+e.message, true);
+    }
+  }
+  $("connect").addEventListener("click", connect);
+  $("key").addEventListener("keydown", e => { if(e.key==="Enter") connect(); });
+  $("disconnect").addEventListener("click", () => {
+    key = "";
+    $("key").value = "";
+    $("jobs").textContent = "Bağlantı kesildi.";
+    $("diagnostics").textContent = "Bağlanınca kullanılabilir.";
+    $("logs").textContent = "Bağlanınca kullanılabilir.";
+    setMessage("Panel oturumu kapatıldı.");
+  });
+  $("refresh").addEventListener("click", refresh);
+  $("diagnose").addEventListener("click", diagnose);
+  $("encode").addEventListener("click", async () => {
+    $("encode").disabled = true;
+    $("encodeResult").textContent = "İş gönderiliyor…";
+    try {
+      const payload = {video_url:$("video").value.trim(), subtitle_url:$("subtitle").value.trim()||null, codec:$("codec").value};
+      const result = await request("/api/encode", {method:"POST", body:JSON.stringify(payload)});
+      $("encodeResult").textContent = "İstek gönderildi.\\nCodec: "+result.codec+"\\nAltyazı: "+(result.has_subtitle?"var":"yok")+"\\nDurum: "+result.status;
+      setMessage("Encode isteği GitHub Actions'a gönderildi.");
+      renderJobs(await request("/api/jobs"));
+    } catch(e) {
+      $("encodeResult").textContent = e.message;
+      setMessage("Encode isteği gönderilemedi: "+e.message, true);
+    } finally { $("encode").disabled = false; }
+  });
 })();
 </script>
 </body>
