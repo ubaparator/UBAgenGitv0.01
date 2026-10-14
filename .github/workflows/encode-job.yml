@@ -1,0 +1,142 @@
+name: Encode job
+
+on:
+  repository_dispatch:
+    types: [encode_request]
+  workflow_dispatch:
+    inputs:
+      video_url:
+        description: Direct HTTP(S) video URL
+        required: true
+        type: string
+      subtitle_url:
+        description: Optional direct HTTP(S) ASS/SRT URL
+        required: false
+        type: string
+      codec:
+        description: Output codec
+        required: true
+        default: h264
+        type: choice
+        options: [h264, h265]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: encode-${{ github.run_id }}
+  cancel-in-progress: false
+
+jobs:
+  encode:
+    runs-on: ubuntu-latest
+    timeout-minutes: 350
+    steps:
+      - name: Validate inputs
+        id: input
+        shell: bash
+        env:
+          EVENT_VIDEO: ${{ github.event.client_payload.video_url }}
+          EVENT_SUBTITLE: ${{ github.event.client_payload.subtitle_url }}
+          EVENT_CODEC: ${{ github.event.client_payload.codec }}
+          MANUAL_VIDEO: ${{ inputs.video_url }}
+          MANUAL_SUBTITLE: ${{ inputs.subtitle_url }}
+          MANUAL_CODEC: ${{ inputs.codec }}
+          EVENT_NAME: ${{ github.event_name }}
+        run: |
+          set -euo pipefail
+          if [[ "$EVENT_NAME" == "repository_dispatch" ]]; then
+            VIDEO="$EVENT_VIDEO"; SUBTITLE="$EVENT_SUBTITLE"; CODEC="$EVENT_CODEC"
+          else
+            VIDEO="$MANUAL_VIDEO"; SUBTITLE="$MANUAL_SUBTITLE"; CODEC="$MANUAL_CODEC"
+          fi
+          [[ "$VIDEO" =~ ^https?:// ]] || { echo "Video URL must use HTTP(S)"; exit 1; }
+          if [[ -n "$SUBTITLE" && ! "$SUBTITLE" =~ ^https?:// ]]; then echo "Subtitle URL must use HTTP(S)"; exit 1; fi
+          [[ "$CODEC" == "h264" || "$CODEC" == "h265" ]] || { echo "Codec must be h264 or h265"; exit 1; }
+          echo "video=$VIDEO" >> "$GITHUB_OUTPUT"
+          echo "subtitle=$SUBTITLE" >> "$GITHUB_OUTPUT"
+          echo "codec=$CODEC" >> "$GITHUB_OUTPUT"
+
+      - name: Install tools
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y ffmpeg curl
+          curl https://rclone.org/install.sh | sudo bash
+
+      - name: Download input files
+        env:
+          VIDEO_URL: ${{ steps.input.outputs.video }}
+          SUBTITLE_URL: ${{ steps.input.outputs.subtitle }}
+        run: |
+          set -euo pipefail
+          mkdir -p work output
+          curl --fail --location --retry 3 --retry-delay 2 --connect-timeout 30 "$VIDEO_URL" -o work/input-video
+          if [[ -n "$SUBTITLE_URL" ]]; then
+            curl --fail --location --retry 3 --retry-delay 2 --connect-timeout 30 "$SUBTITLE_URL" -o work/subtitle
+            case "$SUBTITLE_URL" in
+              *.[aA][sS][sS]*|*.[sS][sS][aA]*) cp work/subtitle work/subtitle.ass ;;
+              *) cp work/subtitle work/subtitle.srt ;;
+            esac
+          fi
+          ffprobe -v error -show_entries format=duration -of default=noprint_wrappers=1:nokey=1 work/input-video
+
+      - name: Encode H.264 / H.265
+        env:
+          CODEC: ${{ steps.input.outputs.codec }}
+        run: |
+          set -euo pipefail
+          INPUT="work/input-video"
+          OUTPUT="output/ubagen-${GITHUB_RUN_ID}-${CODEC}.mp4"
+          if [[ -f work/subtitle.ass ]]; then
+            SUB_FILTER="ass=work/subtitle.ass"
+          elif [[ -f work/subtitle.srt ]]; then
+            SUB_FILTER="subtitles=work/subtitle.srt"
+          else
+            SUB_FILTER=""
+          fi
+          if [[ "$CODEC" == "h265" ]]; then
+            VCODEC=(-c:v libx265 -preset medium -crf 24)
+          else
+            VCODEC=(-c:v libx264 -preset medium -crf 21)
+          fi
+          if [[ -n "$SUB_FILTER" ]]; then
+            ffmpeg -hide_banner -y -i "$INPUT" -vf "$SUB_FILTER" "${VCODEC[@]}" -c:a aac -b:a 192k -movflags +faststart "$OUTPUT"
+          else
+            ffmpeg -hide_banner -y -i "$INPUT" "${VCODEC[@]}" -c:a aac -b:a 192k -movflags +faststart "$OUTPUT"
+          fi
+          echo "OUTPUT_FILE=$OUTPUT" >> "$GITHUB_ENV"
+
+      - name: Upload to rclone remote
+        id: remote-upload
+        if: ${{ secrets.RCLONE_CONFIG != '' }}
+        env:
+          RCLONE_CONFIG_TEXT: ${{ secrets.RCLONE_CONFIG }}
+          RCLONE_REMOTE_PATH: ${{ vars.RCLONE_REMOTE_PATH }}
+        run: |
+          set -euo pipefail
+          mkdir -p "$HOME/.config/rclone"
+          printf '%s\n' "$RCLONE_CONFIG_TEXT" > "$HOME/.config/rclone/rclone.conf"
+          chmod 600 "$HOME/.config/rclone/rclone.conf"
+          DEST="${RCLONE_REMOTE_PATH:-drive:UBAgen-Temporary}"
+          rclone copy "$OUTPUT_FILE" "$DEST" --progress --retries 3
+          echo "uploaded=true" >> "$GITHUB_OUTPUT"
+          echo "Remote: $DEST/$(basename "$OUTPUT_FILE")" >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Keep artifact if remote upload is not configured
+        if: ${{ steps.remote-upload.outcome != 'success' }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: ubagen-encode-${{ github.run_id }}
+          path: output/*
+          retention-days: 1
+
+      - name: Job summary
+        if: always()
+        run: |
+          {
+            echo "## UBAgen encode"
+            echo "- Codec: ${{ steps.input.outputs.codec }}"
+            echo "- Run: ${{ github.run_id }}"
+            echo "- Remote upload: ${{ steps.remote-upload.outcome }}"
+            echo "- Output: ${OUTPUT_FILE:-not-created}"
+          } >> "$GITHUB_STEP_SUMMARY"
