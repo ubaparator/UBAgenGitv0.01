@@ -108,12 +108,16 @@ jobs:
 
       - name: Upload to rclone remote
         id: remote-upload
-        if: ${{ secrets.RCLONE_CONFIG != '' }}
         env:
           RCLONE_CONFIG_TEXT: ${{ secrets.RCLONE_CONFIG }}
           RCLONE_REMOTE_PATH: ${{ vars.RCLONE_REMOTE_PATH }}
         run: |
           set -euo pipefail
+          if [[ -z "$RCLONE_CONFIG_TEXT" ]]; then
+            echo "uploaded=false" >> "$GITHUB_OUTPUT"
+            echo "Rclone not configured; artifact fallback will be used." >> "$GITHUB_STEP_SUMMARY"
+            exit 0
+          fi
           mkdir -p "$HOME/.config/rclone"
           printf '%s\n' "$RCLONE_CONFIG_TEXT" > "$HOME/.config/rclone/rclone.conf"
           chmod 600 "$HOME/.config/rclone/rclone.conf"
@@ -123,7 +127,7 @@ jobs:
           echo "Remote: $DEST/$(basename "$OUTPUT_FILE")" >> "$GITHUB_STEP_SUMMARY"
 
       - name: Keep artifact if remote upload is not configured
-        if: ${{ steps.remote-upload.outcome != 'success' }}
+        if: ${{ steps.remote-upload.outputs.uploaded != 'true' }}
         uses: actions/upload-artifact@v4
         with:
           name: ubagen-encode-${{ github.run_id }}
