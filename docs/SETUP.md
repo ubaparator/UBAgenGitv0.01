@@ -26,7 +26,7 @@ Discord Developer Portal'da bot oluştur, tokenı Render'a ekle ve botu sunucuya
 
 ## 4. Rclone (isteğe bağlı)
 GitHub → Settings → Secrets and variables → Actions → Secrets altında `RCLONE_CONFIG` oluştur. Değer, rclone'un INI biçimindeki tam yapılandırma dosyası olmalı. **Secret değerini depoya veya loglara yazma.**
-Actions Variables alanında `RCLONE_REMOTE_PATH` = `drive:UBAgen-Temporary` gibi, yalnızca bu botun geçici çıktıları için ayrılmış bir uzak klasör tanımla. İlk deneme için özel bir klasör kullan; bu sürüm otomatik 2 saatlik silme işi içermiyor. Rclone yapılandırması yoksa çıktı 1 gün saklanan GitHub artifact olarak yüklenir.
+Actions Variables alanında `RCLONE_REMOTE_PATH` = `drive:UBAgen-Temporary` gibi, yalnızca bu botun geçici çıktıları için ayrılmış bir uzak klasör tanımla. Zamanlanmış temizlik workflow'u bu klasördeki 2 saatten eski `.mp4` dosyalarını siler; bu yüzden bu klasöre kalıcı dosya koyma. Rclone yapılandırması yoksa çıktı 1 gün saklanan GitHub artifact olarak yüklenir.
 
 ## 5. Encode notları
 - Girdiler doğrudan erişilebilen HTTP(S) video/altyazı URL'leri olmalı. Discord eklerinin CDN URL'leri kısa süreli olabilir; büyük veya süresi dolan URL'ler başarısız olabilir.
