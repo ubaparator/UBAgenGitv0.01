@@ -1,0 +1,32 @@
+name: Clean temporary encode outputs
+
+on:
+  schedule:
+    - cron: "17,47 * * * *"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  cleanup:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Install rclone
+        run: curl https://rclone.org/install.sh | sudo bash
+      - name: Delete temporary MP4 files older than two hours
+        env:
+          RCLONE_CONFIG_TEXT: ${{ secrets.RCLONE_CONFIG }}
+          RCLONE_REMOTE_PATH: ${{ vars.RCLONE_REMOTE_PATH }}
+        run: |
+          set -euo pipefail
+          if [[ -z "$RCLONE_CONFIG_TEXT" ]]; then
+            echo "RCLONE_CONFIG not configured; cleanup skipped."
+            exit 0
+          fi
+          mkdir -p "$HOME/.config/rclone"
+          printf '%s\n' "$RCLONE_CONFIG_TEXT" > "$HOME/.config/rclone/rclone.conf"
+          chmod 600 "$HOME/.config/rclone/rclone.conf"
+          DEST="${RCLONE_REMOTE_PATH:-drive:UBAgen-Temporary}"
+          echo "Cleaning only *.mp4 files older than 2h from dedicated path: $DEST"
+          rclone delete "$DEST" --min-age 2h --include "*.mp4" --retries 3
