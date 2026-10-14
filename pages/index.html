@@ -1,0 +1,84 @@
+<!doctype html>
+<html lang="tr">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="theme-color" content="#0a0d12">
+  <title>UBAgen Yönetim</title>
+  <style>
+    :root{color-scheme:dark;--bg:#0a0d12;--panel:#121821;--line:#263140;--text:#edf3fb;--muted:#9aa9bb;--accent:#5ee0a0;--danger:#ff7272}
+    *{box-sizing:border-box}body{margin:0;background:var(--bg);color:var(--text);font:16px/1.5 system-ui,-apple-system,Segoe UI,sans-serif}
+    main{max-width:850px;margin:auto;padding:22px 14px 50px}h1{font-size:1.7rem;margin:0}h2{font-size:1.1rem;margin:0 0 12px}.sub{color:var(--muted);margin:4px 0 18px}
+    section{background:var(--panel);border:1px solid var(--line);border-radius:16px;padding:16px;margin:14px 0}
+    label{display:block;color:var(--muted);font-size:.9rem;margin:10px 0 5px}input,select,button{width:100%;border-radius:10px;border:1px solid var(--line);padding:12px;background:#0c1118;color:var(--text);font:inherit}
+    button{background:var(--accent);color:#07120c;font-weight:750;border:0;margin-top:12px;cursor:pointer}button.secondary{background:#202b39;color:var(--text)}button:disabled{opacity:.55}
+    .grid{display:grid;grid-template-columns:1fr 1fr;gap:10px}.status{border:1px solid var(--line);border-radius:12px;padding:12px;margin-top:10px;overflow-wrap:anywhere}.muted{color:var(--muted)}.error{color:var(--danger);white-space:pre-wrap}.ok{color:var(--accent)}pre{white-space:pre-wrap;overflow-wrap:anywhere;margin:0}
+    @media(max-width:560px){.grid{grid-template-columns:1fr}main{padding:16px 10px 35px}}
+  </style>
+</head>
+<body>
+<main>
+  <h1>UBAgen Yönetim</h1>
+  <p class="sub">Encode işleri • servis durumu • telefona uygun panel</p>
+  <section>
+    <h2>Bağlantı</h2>
+    <label for="api">Render servis adresi (ör. https://ubagen-github-bridge.onrender.com)</label>
+    <input id="api" inputmode="url" placeholder="https://servis-adin.onrender.com">
+    <label for="key">Yönetim anahtarı</label>
+    <input id="key" type="password" autocomplete="off" placeholder="DASHBOARD_API_KEY">
+    <div class="grid"><button id="save" class="secondary">Oturumda kullan</button><button id="refresh">Durumu yenile</button></div>
+    <p class="muted">Anahtar bu sayfada kalıcı olarak kaydedilmez; yalnızca açık oturum belleğinde tutulur.</p>
+  </section>
+  <section>
+    <h2>Encode başlat</h2>
+    <label for="video">Video için doğrudan HTTP(S) bağlantısı</label><input id="video" type="url" placeholder="https://.../video.mp4">
+    <label for="subtitle">İsteğe bağlı ASS/SRT bağlantısı</label><input id="subtitle" type="url" placeholder="https://.../subtitle.ass">
+    <label for="codec">Codec</label><select id="codec"><option value="h264">H.264</option><option value="h265">H.265</option></select>
+    <button id="encode">Encode işini gönder</button><pre id="encodeResult" class="status muted">Henüz iş gönderilmedi.</pre>
+  </section>
+  <section>
+    <h2>Canlı durum</h2><div id="health" class="status muted">Bağlantı kurulmadı.</div>
+    <h2 style="margin-top:16px">Son istekler</h2><div id="jobs" class="status muted">Henüz veri yok.</div>
+    <button id="refresh2" class="secondary">Yenile</button>
+  </section>
+  <section><h2>GitHub Actions</h2><p class="muted">Encode ayrıntıları, FFmpeg logları ve artifact dosyaları GitHub Actions çalıştırmasında görünür.</p><a href="https://github.com/ubaparator/UBAgenGitv0.01/actions" target="_blank" rel="noopener">Actions işlerini aç ↗</a></section>
+  <p id="message" class="muted" role="status"></p>
+</main>
+<script>
+(() => {
+  let api = "", key = "";
+  const $ = id => document.getElementById(id);
+  const setMessage = (s, bad=false) => { $("message").textContent=s; $("message").className=bad?"error":"muted"; };
+  const base = () => api.trim().replace(/\/$/, "");
+  async function request(path, options={}) {
+    if (!base() || !key) throw new Error("Önce servis adresini ve yönetim anahtarını gir.");
+    const response = await fetch(base()+path, { ...options, headers: { "Content-Type":"application/json", "X-Dashboard-Key":key, ...(options.headers||{}) }});
+    const data = await response.json().catch(()=>({detail:"Geçersiz sunucu yanıtı"}));
+    if (!response.ok) throw new Error(data.detail || ("HTTP "+response.status));
+    return data;
+  }
+  $("save").onclick = () => { api=$("api").value.trim(); key=$("key").value; setMessage("Bilgiler bu açık sayfa oturumunda kullanılacak."); };
+  async function refresh() {
+    try {
+      const health = await fetch(base()+"/health").then(r=>{if(!r.ok)throw new Error("Health HTTP "+r.status);return r.json();});
+      $("health").innerHTML = '<span class="ok">● Servis erişilebilir</span><br>Discord: '+(health.discord_ready?"bağlı":"bağlı değil")+'<br>Çalışma süresi: '+Math.floor(health.uptime_seconds/3600)+' sa '+Math.floor((health.uptime_seconds%3600)/60)+' dk<br>Yeni işler: '+(health.accepting_jobs?"açık":"kapalı");
+      const data = await request("/api/jobs");
+      $("jobs").textContent = data.jobs.length ? data.jobs.map((j,i)=>(i+1)+". "+j.status+" • "+j.codec+" • "+new Date(j.requested_at*1000).toLocaleString("tr-TR")).join("\n") : "Bu servis oturumunda henüz istek yok.";
+      setMessage("Durum güncellendi.");
+    } catch(e) { $("health").textContent="Durum alınamadı."; setMessage(e.message,true); }
+  }
+  $("refresh").onclick=refresh; $("refresh2").onclick=refresh;
+  $("encode").onclick=async()=>{
+    $("encode").disabled=true; $("encodeResult").textContent="İş gönderiliyor...";
+    try{
+      const body={video_url:$("video").value.trim(),subtitle_url:$("subtitle").value.trim()||null,codec:$("codec").value};
+      const result=await request("/api/encode",{method:"POST",body:JSON.stringify(body)});
+      $("encodeResult").textContent="İstek gönderildi. Codec: "+result.codec+" • Altyazı: "+(result.has_subtitle?"var":"yok")+"\nİşler için GitHub Actions sayfasını aç.";
+      setMessage("Encode isteği gönderildi.");
+    }catch(e){$("encodeResult").textContent=e.message;setMessage(e.message,true);}
+    finally{$("encode").disabled=false;}
+  };
+})();
+</script>
+</body>
+</html>
