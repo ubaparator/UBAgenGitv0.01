@@ -127,7 +127,7 @@ button{background:var(--accent);color:#06130c;font-weight:800;border:0;margin-to
       $("discordState").textContent = health.discord_ready ? "Bağlı" : "Bağlı değil";
       $("discordState").className = health.discord_ready ? "ok" : "warn";
       $("uptime").textContent = duration(health.uptime_seconds);
-      $("health").textContent = "Servis: "+(health.service||"UBAgen")+"\\nYeni işler: "+(health.accepting_jobs?"açık":"kapalı")+"\\nKontrol: "+new Date().toLocaleString("tr-TR");
+      $("health").textContent = "Servis: "+(health.service||"UBAgen")+"\nYeni işler: "+(health.accepting_jobs?"açık":"kapalı")+"\nKontrol: "+new Date().toLocaleString("tr-TR");
       if (key) renderJobs(await request("/api/jobs"));
       setMessage("Servis durumu yenilendi.");
     } catch(e) {
@@ -150,7 +150,7 @@ button{background:var(--accent);color:#06130c;font-weight:800;border:0;margin-to
       $("serviceState").textContent = "Çalışıyor";
       $("discordState").textContent = health.discord_ready ? "Bağlı" : "Bağlı değil";
       $("uptime").textContent = duration(health.uptime_seconds);
-      $("health").textContent = "Panel bağlantısı doğrulandı.\\nDiscord: "+(health.discord_ready?"bağlı":"henüz bağlı değil")+"\\nDepo: "+config.repository;
+      $("health").textContent = "Panel bağlantısı doğrulandı.\nDiscord: "+(health.discord_ready?"bağlı":"henüz bağlı değil")+"\nDepo: "+config.repository;
       renderJobs(await request("/api/jobs"));
       setMessage("Bağlandı. Şimdi tanılama çalıştırabilirsin.");
       await diagnose();
@@ -191,7 +191,7 @@ button{background:var(--accent);color:#06130c;font-weight:800;border:0;margin-to
     try {
       const payload = {video_url:$("video").value.trim(), subtitle_url:$("subtitle").value.trim()||null, codec:$("codec").value};
       const result = await request("/api/encode", {method:"POST", body:JSON.stringify(payload)});
-      $("encodeResult").textContent = "İstek gönderildi.\\nCodec: "+result.codec+"\\nAltyazı: "+(result.has_subtitle?"var":"yok")+"\\nDurum: "+result.status;
+      $("encodeResult").textContent = "İstek gönderildi.\nCodec: "+result.codec+"\nAltyazı: "+(result.has_subtitle?"var":"yok")+"\nDurum: "+result.status;
       setMessage("Encode isteği GitHub Actions'a gönderildi.");
       renderJobs(await request("/api/jobs"));
     } catch(e) {
