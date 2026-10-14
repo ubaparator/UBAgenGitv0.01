@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+from collections import deque
 import os
 import time
 from typing import Optional
@@ -16,6 +17,20 @@ from fastapi.responses import JSONResponse
 
 logging.basicConfig(level=os.getenv("LOG_LEVEL", "INFO"))
 log = logging.getLogger("ubagen-bridge")
+RECENT_LOGS: deque[str] = deque(maxlen=40)
+
+
+class MemoryLogHandler(logging.Handler):
+    def emit(self, record):
+        try:
+            RECENT_LOGS.append(self.format(record))
+        except Exception:
+            pass
+
+
+_memory_handler = MemoryLogHandler()
+_memory_handler.setFormatter(logging.Formatter("%(asctime)s %(levelname)s %(message)s"))
+log.addHandler(_memory_handler)
 
 REPOSITORY = os.getenv("GITHUB_REPOSITORY", "ubaparator/UBAgenGitv0.01")
 GH_TOKEN = os.getenv("GH_TOKEN", "")
@@ -96,6 +111,18 @@ async def dispatch_encode(video_url: str, subtitle_url: Optional[str], codec: st
     RECENT_JOBS.insert(0, job)
     del RECENT_JOBS[MAX_JOBS:]
     return job
+
+
+@bot.event
+async def on_disconnect():
+    global LAST_ERROR
+    LAST_ERROR = "Discord Gateway bağlantısı kesildi; yeniden bağlanma bekleniyor."
+    log.warning(LAST_ERROR)
+
+
+@bot.event
+async def on_resumed():
+    log.info("Discord Gateway bağlantısı yeniden kuruldu.")
 
 
 @bot.event
@@ -216,13 +243,51 @@ async def config_check(x_dashboard_key: Optional[str] = Header(default=None)):
     }
 
 
+@app.get("/api/diagnostics")
+async def diagnostics(x_dashboard_key: Optional[str] = Header(default=None)):
+    auth(x_dashboard_key)
+    checks = [
+        {"name": "Render servisi", "ok": True, "detail": "API isteğe yanıt verdi."},
+        {"name": "Discord bot tokenı", "ok": bool(BOT_TOKEN), "detail": "Tanımlı" if BOT_TOKEN else "DISCORD_BOT_TOKEN eksik; Render Environment bölümüne ekle."},
+        {"name": "Discord Gateway", "ok": bot.is_ready(), "detail": "Bağlı" if bot.is_ready() else "Bağlı değil; token, bot daveti ve Render loglarını kontrol et."},
+        {"name": "GitHub tokenı", "ok": bool(GH_TOKEN), "detail": "Tanımlı" if GH_TOKEN else "GH_TOKEN eksik; encode işlerini başlatamaz."},
+        {"name": "Panel anahtarı", "ok": bool(DASHBOARD_API_KEY), "detail": "Tanımlı" if DASHBOARD_API_KEY else "DASHBOARD_API_KEY eksik."},
+        {"name": "Depo hedefi", "ok": REPOSITORY == "ubaparator/UBAgenGitv0.01", "detail": REPOSITORY},
+        {"name": "İş kabulü", "ok": ACCEPTING_JOBS, "detail": "Açık" if ACCEPTING_JOBS else "Yönetici /discord komutuyla yeni işleri açabilir."},
+    ]
+    return {
+        "ok": all(item["ok"] for item in checks),
+        "checked_at": int(time.time()),
+        "uptime_seconds": int(time.time() - STARTED_AT),
+        "checks": checks,
+        "last_error": LAST_ERROR,
+        "logs": list(RECENT_LOGS)[-25:],
+    }
+
+
+@app.get("/api/logs")
+async def logs(x_dashboard_key: Optional[str] = Header(default=None)):
+    auth(x_dashboard_key)
+    return {"last_error": LAST_ERROR, "logs": list(RECENT_LOGS)[-25:]}
+
+
+async def run_discord_bot():
+    global LAST_ERROR
+    try:
+        await bot.start(BOT_TOKEN)
+    except Exception as exc:
+        LAST_ERROR = f"Discord bot başlatılamadı: {type(exc).__name__}: {exc}"
+        log.exception("Discord bot startup failed")
+
+
 @app.on_event("startup")
 async def start_bot():
-    global bot_task
+    global bot_task, LAST_ERROR
     app.state.stopping = False
     if BOT_TOKEN:
-        bot_task = asyncio.create_task(bot.start(BOT_TOKEN))
+        bot_task = asyncio.create_task(run_discord_bot())
     else:
+        LAST_ERROR = "DISCORD_BOT_TOKEN eksik."
         log.error("DISCORD_BOT_TOKEN missing; HTTP health endpoint remains available.")
 
 

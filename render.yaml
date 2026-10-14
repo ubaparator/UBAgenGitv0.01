@@ -13,7 +13,5 @@ services:
         value: ubaparator/UBAgenGitv0.01
       - key: DASHBOARD_API_KEY
         sync: false
-      - key: GH_TOKEN
-        sync: false
       - key: DISCORD_BOT_TOKEN
         sync: false

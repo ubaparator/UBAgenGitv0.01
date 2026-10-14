@@ -41,6 +41,31 @@
     <h2 style="margin-top:16px">Son istekler</h2><div id="jobs" class="status muted">Henüz veri yok.</div>
     <button id="refresh2" class="secondary">Yenile</button>
   </section>
+  <section>
+    <h2>Sistem tanılaması</h2>
+    <p class="muted">Bağlantı, eksik ortam değişkenleri, Discord Gateway, depo hedefi ve son uygulama loglarını kontrol eder. Gizli değerleri asla göstermez.</p>
+    <button id="diagnose" class="secondary">Tüm kontrolleri çalıştır</button>
+    <pre id="diagnostics" class="status muted">Tanılama henüz çalıştırılmadı.</pre>
+    <h2 style="margin-top:16px">Son loglar / hata</h2>
+    <pre id="logs" class="status muted">Loglar henüz alınmadı.</pre>
+  </section>
+  <section>
+    <h2>Token ve izin ayarları</h2>
+    <p class="muted">Güvenlik için Discord bot tokenını veya GitHub tokenını bu web sayfasına yazma. Bunlar yalnızca ilgili servisin gizli ortam değişkenlerine girilmeli.</p>
+    <a href="https://dashboard.render.com/" target="_blank" rel="noopener">Render Environment / servis logları ↗</a><br>
+    <a href="https://github.com/ubaparator/UBAgenGitv0.01/settings/secrets/actions" target="_blank" rel="noopener">GitHub Actions Secrets ↗</a><br>
+    <a href="https://github.com/ubaparator/UBAgenGitv0.01/settings/variables/actions" target="_blank" rel="noopener">GitHub Actions Variables ↗</a><br>
+    <a href="https://github.com/ubaparator/UBAgenGitv0.01/settings/pages" target="_blank" rel="noopener">GitHub Pages ayarları ↗</a>
+    <p class="muted">Render: DISCORD_BOT_TOKEN, DASHBOARD_API_KEY, GH_TOKEN. GitHub Actions Secrets: RCLONE_CONFIG, RENDER_HEALTH_URL. Variables: RCLONE_REMOTE_PATH.</p>
+  </section>
+  <section><h2>Bilinen sorunlar ve kontroller</h2>
+    <details><summary>Discord bot çevrimdışı / slash komutları görünmüyor</summary><p>DISCORD_BOT_TOKEN doğru mu? Bot sunucuya davetli mi? Render loglarında 401/Privileged intent/Gateway hatası var mı? Uygulama açılırken komut senkronizasyonu tamamlanmış mı? Komutlar bazen Discord istemcisinde gecikmeli görünebilir.</p></details>
+    <details><summary>GitHub Actions işi başlamıyor (401/403/404)</summary><p>GH_TOKEN geçerli mi, doğru depoya erişebiliyor mu ve Contents: Read and write izni var mı? repository_dispatch event adı encode_request ile eşleşmeli. Actions bu depoda etkin olmalı.</p></details>
+    <details><summary>Video/altyazı indirilemiyor</summary><p>Bağlantı doğrudan indirilebilir ve HTTP(S) olmalı. Discord ek bağlantıları süreli olabilir; çok büyük dosyalar veya giriş isteyen sayfalar başarısız olabilir. Bu ilk sürüm magnet/torrent indirmez.</p></details>
+    <details><summary>FFmpeg / altyazı / font sorunu</summary><p>Actions logundaki ffprobe ve FFmpeg hatalarını incele. ASS dosyasının kodlaması, font ailesi ve altyazı yolundaki özel karakterler sorun çıkarabilir. Font otomatik paketleme henüz yapılmıyor.</p></details>
+    <details><summary>Rclone / Drive / MEGA / çıktı temizliği</summary><p>RCLONE_CONFIG doğru INI içeriği mi ve remote adı desteklenen backend mi? MEGA için kullanılan rclone sürümünde backend bulunmaması sorun yaratabilir. RCLONE_REMOTE_PATH yalnızca geçici klasör olmalı: temizlik görevi 2 saatten eski MP4 dosyalarını siler.</p></details>
+    <details><summary>Uyku, süre ve kota sınırları</summary><p>Render ücretsiz servisleri uyuyabilir; 10 dakikalık ping 7/24 çalışma garantisi vermez. GitHub-hosted runner süre/kota sınırlarına tabidir. Cloud Run/Google Cloud bu mimaride kullanılmıyor.</p></details>
+  </section>
   <section><h2>GitHub Actions</h2><p class="muted">Encode ayrıntıları, FFmpeg logları ve artifact dosyaları GitHub Actions çalıştırmasında görünür.</p><a href="https://github.com/ubaparator/UBAgenGitv0.01/actions" target="_blank" rel="noopener">Actions işlerini aç ↗</a></section>
   <p id="message" class="muted" role="status"></p>
 </main>
@@ -67,6 +92,21 @@
       setMessage("Durum güncellendi.");
     } catch(e) { $("health").textContent="Durum alınamadı."; setMessage(e.message,true); }
   }
+  async function diagnose() {
+    $("diagnostics").textContent="Kontroller çalışıyor...";
+    $("logs").textContent="Loglar alınıyor...";
+    try {
+      const d=await request("/api/diagnostics");
+      $("diagnostics").textContent=d.checks.map(c=>(c.ok?"✓ ":"✗ ")+c.name+": "+c.detail).join("\\n")+"\\n\\nGenel sonuç: "+(d.ok?"Kontroller başarılı":"Eksik/hatalı ayar var")+"\\nSon hata: "+d.last_error;
+      $("logs").textContent=(d.logs&&d.logs.length)?d.logs.join("\\n"):"Uygulama belleğinde henüz log yok.";
+      setMessage(d.ok?"Tanılama tamamlandı.":"Tanılama tamamlandı; başarısız kontroller var.",!d.ok);
+    } catch(e) {
+      $("diagnostics").textContent=e.message;
+      $("logs").textContent="Loglar alınamadı.";
+      setMessage(e.message,true);
+    }
+  }
+  $("diagnose").onclick=diagnose;
   $("refresh").onclick=refresh; $("refresh2").onclick=refresh;
   $("encode").onclick=async()=>{
     $("encode").disabled=true; $("encodeResult").textContent="İş gönderiliyor...";
