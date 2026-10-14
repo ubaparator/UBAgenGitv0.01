@@ -11,7 +11,7 @@ Bu depo, GitHub Actions encode işçisi + Render üzerinde Discord/API köprüs�
 ## 2. Render web service
 Render'da **New → Web Service → Connect repository** ile bu depoyu seç. `render.yaml` Blueprint olarak kullanılabilir. Ortam değişkenleri:
 - `DISCORD_BOT_TOKEN`: Discord bot tokenı.
-- `GH_TOKEN`: yalnızca bu depoda repository dispatch başlatabilecek fine-grained token; Repository permissions altında **Contents: Read and write** ver.
+- `GH_TOKEN`: encode aşamasında gerekli olacak fine-grained token; ilk `/stats` testi için gerekli değil. Sonradan ekleyeceğiz. Repository permissions altında **Contents: Read and write** ver.
 - `DASHBOARD_API_KEY`: uzun ve rastgele bir yönetim anahtarı; Discord tokenıyla aynı olmasın.
 - `GITHUB_REPOSITORY`: `ubaparator/UBAgenGitv0.01`.
 
@@ -20,7 +20,7 @@ Servis adresini GitHub repo → Settings → Secrets and variables → Actions �
 ## 3. Yönetim paneli ve tanılama
 - Panel dosyası: `pages/index.html`; canlı adresi Pages etkinleştirilip workflow başarıyla çalışınca `https://ubaparator.github.io/UBAgenGitv0.01/` olur.
 - Panelde servis adresi ve `DASHBOARD_API_KEY` girilir; **Discord tokenı veya GitHub tokenı web sayfasına girilmez**. Bunları Render → Environment bölümünde ayarla. Paneldeki tanılama; Discord Gateway, eksik tokenlar, depo hedefi, iş kabulü ve son uygulama loglarını gösterir.
-- `DISCORD_BOT_TOKEN` yalnızca Render Environment'a; `GH_TOKEN` ve `DASHBOARD_API_KEY` de Render Environment'a girilir. `RCLONE_CONFIG` ve `RENDER_HEALTH_URL` GitHub Actions Secrets bölümünde kalır.
+- `DISCORD_BOT_TOKEN` yalnızca Render Environment'a; `GH_TOKEN` ve `DASHBOARD_API_KEY` de Render Environment'a girilir. İlk `/stats` testinde `GH_TOKEN` boş bırakılabilir; encode testinden önce eklenecek. `RCLONE_CONFIG` ve `RENDER_HEALTH_URL` GitHub Actions Secrets bölümünde kalır.
 
 ## 4. Discord botu
 Discord Developer Portal'da bot oluştur, tokenı Render'a ekle ve botu sunucuya davet et. Slash komutları:
