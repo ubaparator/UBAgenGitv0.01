@@ -271,13 +271,23 @@ async def logs(x_dashboard_key: Optional[str] = Header(default=None)):
     return {"last_error": LAST_ERROR, "logs": list(RECENT_LOGS)[-25:]}
 
 
+async def run_discord_bot():
+    global LAST_ERROR
+    try:
+        await bot.start(BOT_TOKEN)
+    except Exception as exc:
+        LAST_ERROR = f"Discord bot başlatılamadı: {type(exc).__name__}: {exc}"
+        log.exception("Discord bot startup failed")
+
+
 @app.on_event("startup")
 async def start_bot():
-    global bot_task
+    global bot_task, LAST_ERROR
     app.state.stopping = False
     if BOT_TOKEN:
-        bot_task = asyncio.create_task(bot.start(BOT_TOKEN))
+        bot_task = asyncio.create_task(run_discord_bot())
     else:
+        LAST_ERROR = "DISCORD_BOT_TOKEN eksik."
         log.error("DISCORD_BOT_TOKEN missing; HTTP health endpoint remains available.")
 
 
