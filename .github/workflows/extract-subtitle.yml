@@ -228,6 +228,11 @@ jobs:
             echo "::error::Subtitle output is missing or empty."
             exit 1
           fi
+          VISIBILITY="$(gh api "repos/$GITHUB_REPOSITORY" --jq '.visibility')"
+          if [ "$VISIBILITY" != "public" ]; then
+            echo "::error::Direct unauthenticated download is unavailable because the repository is not public."
+            exit 1
+          fi
           TAG="subtitle-download-${GITHUB_RUN_ID}"
           gh release create "$TAG" "$OUTPUT" --repo "$GITHUB_REPOSITORY" \
             --title "Temporary subtitle download ${GITHUB_RUN_ID}" \
