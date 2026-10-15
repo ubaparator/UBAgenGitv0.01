@@ -12,10 +12,10 @@ Bu depo, GitHub Actions encode işçisi + Render üzerinde Discord/API köprüs�
 Render → New → Web Service → bu depoyu bağla. `render.yaml` Blueprint olarak kullanılabilir. Servis adı `ubagen-github-bridge` olsa da Render farklı bir URL atarsa panelde “Servis adresini değiştir” bölümüne gerçek adresi yaz.
 
 Render → Environment değişkenleri:
-- `DISCORD_BOT_TOKEN`: Discord Developer Portal'dan aldığın bot tokenı. **Yalnızca Render'da tutulur; web sayfasına veya depoya yazılmaz.**
+- `DISCORD_BOT_TOKEN`: Discord Developer Portal → **Bot** sekmesindeki Bot Token. **Client Secret ve Client ID değildir.** Yalnızca Render'da tutulur; web sayfasına veya depoya yazılmaz. Kopyalarken `Bot ` önekini eklemene gerek yok; uygulama bunu otomatik temizler.
 - `DASHBOARD_API_KEY`: uzun ve rastgele, Discord tokenından farklı bir panel erişim anahtarı.
 - `GITHUB_REPOSITORY`: `ubaparator/UBAgenGitv0.01`.
-- `GH_TOKEN`: encode işleri kullanılacağı zaman ekle; ilk bağlantı ve `/stats` için gerekli değil. Fine-grained tokena bu depoda gerekli Actions dispatch/contents izinlerini ver.
+- `GH_TOKEN`: GitHub fine-grained tokenı; bu depoda Actions dispatch izni gerekir. Blueprint artık bu alanı da ister. Discord bot tokenıyla aynı değildir; ilk bağlantı ve `/stats` için gerekli değil.
 
 Panelde yalnızca `DASHBOARD_API_KEY` girilir; servis adresi varsayılan olarak `https://ubagen-github-bridge.onrender.com` gelir. Render farklı URL verdiyse panelde gelişmiş servis adresi alanını değiştir. Discord bot tokenını panelde istemek güvenli değildir; bot bağlantısını sunucu tarafında Render yapar.
 
