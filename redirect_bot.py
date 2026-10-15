@@ -260,13 +260,13 @@ async def altyazi_ayikla(interaction: discord.Interaction, magnet_link: str, for
     job_id = uuid.uuid4().hex
     try:
         status_message = await interaction.edit_original_response(
-            content="**UBAgen ayıklıyor**\\nVideo adı: video\\nDurum: İstek kuyruğa gönderiliyor..."
+            content="**UBAgen ayıklıyor**\nVideo adı: video\nDurum: İstek kuyruğa gönderiliyor..."
         )
         await dispatch_subtitle_extraction(
             magnet_link, dil, format.value, interaction.channel_id, status_message.id, job_id
         )
         await interaction.edit_original_response(
-            content=f"**UBAgen ayıklıyor**\\nVideo adı: video\\nDurum: Torrent indirme bilgisi bekleniyor..."
+            content=f"**UBAgen ayıklıyor**\nVideo adı: video\nDurum: Torrent indirme bilgisi bekleniyor..."
         )
     except HTTPException as exc:
         await interaction.edit_original_response(content=f"❌ Altyazı işi başlatılamadı: {str(exc.detail)[:1700]}")
