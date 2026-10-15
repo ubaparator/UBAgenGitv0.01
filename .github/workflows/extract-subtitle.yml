@@ -371,15 +371,15 @@ jobs:
                        '\nTracker list: '+tracker_count+' tracker ('+tracker_display+')'+
                        '\nWorkflow günlükleri: '+workflow)
           elif os.getenv('ATTACHMENT_SENT') == 'true':
-              content='✅ **UBAgen ayıklama tamamlandı**\\nAltyazı dosyası bu kanala eklendi.\\nHata kodu: yok (Discord HTTP '+discord_http+', API '+discord_api_code+')\\nTracker list: '+tracker_count+' tracker ('+tracker_display+')\\nWorkflow: '+workflow
+              content='✅ **UBAgen ayıklama tamamlandı**\nAltyazı dosyası bu kanala eklendi.\nHata kodu: yok (Discord HTTP '+discord_http+', API '+discord_api_code+')\nTracker list: '+tracker_count+' tracker ('+tracker_display+')\nWorkflow: '+workflow
           else:
               direct=os.getenv('DIRECT_URL','')
               if not direct.startswith('https://github.com/'):
-                  content=('❌ **UBAgen ayıklama tamamlandı ancak dosya teslim edilemedi.**\\nHata kodu: DIRECT_LINK_NOT_CREATED; Discord HTTP '+discord_http+', API '+discord_api_code+' '+discord_api_message+';\\nTracker list: '+tracker_count+' tracker ('+tracker_display+')'+
+                  content=('❌ **UBAgen ayıklama tamamlandı ancak dosya teslim edilemedi.**\nHata kodu: DIRECT_LINK_NOT_CREATED; Discord HTTP '+discord_http+', API '+discord_api_code+' '+discord_api_message+';\nTracker list: '+tracker_count+' tracker ('+tracker_display+')'+
                            '\nTracker list: '+tracker_count+' tracker ('+tracker_display+')'+
                            '\nWorkflow günlükleri: '+workflow)
               else:
-                  content='✅ **UBAgen ayıklama tamamlandı**\\n[Altyazıyı doğrudan indir (ZIP değil)]('+direct+')\\nDosya teslimi: Discord HTTP '+discord_http+', API '+discord_api_code+' '+discord_api_message+'; doğrudan bağlantı yedeği kullanıldı.\\nBağlantı geçicidir; 48 saat içinde kaldırılır.\\nTracker list: '+tracker_count+' tracker ('+tracker_display+')\\nWorkflow: '+workflow
+                  content='✅ **UBAgen ayıklama tamamlandı**\n[Altyazıyı doğrudan indir (ZIP değil)]('+direct+')\nDosya teslimi: Discord HTTP '+discord_http+', API '+discord_api_code+' '+discord_api_message+'; doğrudan bağlantı yedeği kullanıldı.\nBağlantı geçicidir; 48 saat içinde kaldırılır.\nTracker list: '+tracker_count+' tracker ('+tracker_display+')\nWorkflow: '+workflow
           body=json.dumps({'job_id':os.getenv('SUBTITLE_JOB_ID',''),'channel_id':channel,'message_id':message,'content':content}).encode()
           req=urllib.request.Request(url,data=body,headers={'Content-Type':'application/json','X-Subtitle-Callback-Secret':secret},method='POST')
           try:
