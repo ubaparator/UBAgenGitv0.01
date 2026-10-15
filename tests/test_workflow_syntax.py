@@ -44,6 +44,28 @@ class WorkflowSyntaxTests(unittest.TestCase):
                         i = end + 1
         self.assertGreater(checked, 0, "No embedded Python heredocs were validated")
 
+    def test_shell_run_blocks_parse(self):
+        import shutil
+        import subprocess
+
+        if not shutil.which("bash"):
+            self.skipTest("bash is not installed")
+        workflow_dir = ROOT / ".github" / "workflows"
+        for path in sorted(workflow_dir.glob("*.yml")):
+            parsed = yaml.safe_load(path.read_text(encoding="utf-8"))
+            for job_name, job in (parsed.get("jobs") or {}).items():
+                for index, step in enumerate(job.get("steps") or []):
+                    run = step.get("run")
+                    if not isinstance(run, str):
+                        continue
+                    result = subprocess.run(
+                        ["bash", "-n"], input=run, text=True, capture_output=True
+                    )
+                    self.assertEqual(
+                        result.returncode, 0,
+                        f"Invalid shell in {path.name}/{job_name}/step {index + 1}: {result.stderr}",
+                    )
+
 
 if __name__ == "__main__":
     unittest.main()
