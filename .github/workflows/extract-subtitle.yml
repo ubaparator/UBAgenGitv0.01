@@ -152,7 +152,7 @@ jobs:
                         f'\nETA: {eta_text} | DL: {dl_text}' +
                         f'\nSeeder: {seed_text} | Bağlantı: {peer_text}' +
                         f'\nİndirilen: {size_text}' +
-                        '\n' + tracker_line + '\nWorkflow: ' + workflow_url)
+                        '\nHata kodu: yok (işlem sürüyor)' + '\n' + tracker_line + '\nWorkflow: ' + workflow_url)
               if status != last_status:
                   report(status)
                   last_status = status
