@@ -32,9 +32,20 @@ _memory_handler = MemoryLogHandler()
 _memory_handler.setFormatter(logging.Formatter("%(asctime)s %(levelname)s %(message)s"))
 log.addHandler(_memory_handler)
 
+def normalize_discord_token(value: Optional[str]) -> str:
+    """Normalize common copy/paste formatting without logging the secret."""
+    token = (value or "").strip()
+    if len(token) >= 2 and token[0] == token[-1] and token[0] in {"'", '"'}:
+        token = token[1:-1].strip()
+    # discord.py adds the Bot authorization scheme itself; avoid "Bot Bot <token>".
+    if token[:4].lower() == "bot ":
+        token = token[4:].strip()
+    return token
+
+
 REPOSITORY = os.getenv("GITHUB_REPOSITORY", "ubaparator/UBAgenGitv0.01")
-GH_TOKEN = os.getenv("GH_TOKEN", "")
-BOT_TOKEN = os.getenv("DISCORD_BOT_TOKEN", "")
+GH_TOKEN = os.getenv("GH_TOKEN", "").strip()
+BOT_TOKEN = normalize_discord_token(os.getenv("DISCORD_BOT_TOKEN"))
 DASHBOARD_API_KEY = os.getenv("DASHBOARD_API_KEY", "")
 STARTED_AT = time.time()
 LAST_ERROR = "Henüz hata kaydı yok."
@@ -249,7 +260,7 @@ async def diagnostics(x_dashboard_key: Optional[str] = Header(default=None)):
     checks = [
         {"name": "Render servisi", "ok": True, "detail": "API isteğe yanıt verdi."},
         {"name": "Discord bot tokenı", "ok": bool(BOT_TOKEN), "detail": "Tanımlı" if BOT_TOKEN else "DISCORD_BOT_TOKEN eksik; Render Environment bölümüne ekle."},
-        {"name": "Discord Gateway", "ok": bot.is_ready(), "detail": "Bağlı" if bot.is_ready() else "Bağlı değil; token, bot daveti ve Render loglarını kontrol et."},
+        {"name": "Discord Gateway", "ok": bot.is_ready(), "detail": "Bağlı" if bot.is_ready() else (LAST_ERROR if "Discord tokenı Discord tarafından reddedildi" in LAST_ERROR else "Bağlı değil; Render loglarını ve bot davetini kontrol et.")},
         {"name": "GitHub tokenı", "ok": bool(GH_TOKEN), "detail": "Tanımlı" if GH_TOKEN else "GH_TOKEN eksik; encode işlerini başlatamaz."},
         {"name": "Panel anahtarı", "ok": bool(DASHBOARD_API_KEY), "detail": "Tanımlı" if DASHBOARD_API_KEY else "DASHBOARD_API_KEY eksik."},
         {"name": "Depo hedefi", "ok": REPOSITORY == "ubaparator/UBAgenGitv0.01", "detail": REPOSITORY},
@@ -275,6 +286,16 @@ async def run_discord_bot():
     global LAST_ERROR
     try:
         await bot.start(BOT_TOKEN)
+    except discord.LoginFailure:
+        # Never log the token or any environment value. Discord 401 means the
+        # value received by this process was not accepted as a bot token.
+        LAST_ERROR = (
+            "Discord tokenı Discord tarafından reddedildi (401 Unauthorized). "
+            "Render > Environment > DISCORD_BOT_TOKEN değerinin Developer Portal > "
+            "Bot sekmesindeki Bot Token olduğundan emin ol; Client Secret veya Client ID "
+            "kullanma. Değeri yeniden kaydet ve servisi redeploy et. Token loglanmadı."
+        )
+        log.error("%s", LAST_ERROR)
     except Exception as exc:
         LAST_ERROR = f"Discord bot başlatılamadı: {type(exc).__name__}: {exc}"
         log.exception("Discord bot startup failed")
