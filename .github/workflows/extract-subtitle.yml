@@ -120,32 +120,51 @@ jobs:
           if-no-files-found: error
           retention-days: 1
 
-      - name: Send subtitle directly to Discord
-        if: success() && env.DISCORD_CHANNEL_ID != ''
+      - name: Send subtitle file as a Discord attachment (no links)
+        if: success()
         env:
           DISCORD_BOT_TOKEN: ${{ secrets.DISCORD_BOT_TOKEN }}
         shell: bash
         run: |
           set -euo pipefail
           if [ -z "${DISCORD_BOT_TOKEN:-}" ]; then
-            echo "::error::Missing repository secret DISCORD_BOT_TOKEN. Add the bot token in Settings > Secrets and variables > Actions."
+            echo "::error::Cannot attach the subtitle: repository secret DISCORD_BOT_TOKEN is missing. Add it in Settings > Secrets and variables > Actions."
             exit 1
           fi
-          OUTPUT="$(find . -maxdepth 1 -type f -name 'extracted_sub_*.*' | head -n 1)"
-          if [ -z "$OUTPUT" ]; then echo "::error::Subtitle output file not found."; exit 1; fi
+          if [ -z "${DISCORD_CHANNEL_ID:-}" ]; then
+            echo "::error::Cannot attach the subtitle: Discord channel ID was not passed to this workflow."
+            exit 1
+          fi
+          OUTPUT="$(find . -maxdepth 1 -type f -name 'extracted_sub_*.*' -print -quit)"
+          if [ -z "$OUTPUT" ]; then
+            echo "::error::Cannot attach the subtitle: extracted output file was not found."
+            exit 1
+          fi
           python3 - "$OUTPUT" <<'PY'
           import json, os, sys
           output = sys.argv[1]
           with open('discord_payload.json', 'w', encoding='utf-8') as f:
-              json.dump({'content': f'✅ Altyazı hazır: **{os.path.basename(output)}**'}, f, ensure_ascii=False)
+              json.dump({'content': f'✅ Altyazı dosyan hazır: **{os.path.basename(output)}**'}, f, ensure_ascii=False)
           PY
-          HTTP_CODE="$(curl -sS -o discord_response.json -w '%{http_code}' -H "Authorization: Bot ${DISCORD_BOT_TOKEN}" -F "payload_json=$(cat discord_payload.json)" -F "files[0]=@$OUTPUT" "https://discord.com/api/v10/channels/${DISCORD_CHANNEL_ID}/messages")"
+          HTTP_CODE="$(curl --silent --show-error --output discord_response.json --write-out '%{http_code}' \
+            --request POST \
+            --header "Authorization: Bot ${DISCORD_BOT_TOKEN}" \
+            --form "payload_json=$(cat discord_payload.json)" \
+            --form "files[0]=@$OUTPUT;type=application/octet-stream" \
+            "https://discord.com/api/v10/channels/${DISCORD_CHANNEL_ID}/messages")"
           if [ "$HTTP_CODE" -lt 200 ] || [ "$HTTP_CODE" -ge 300 ]; then
-            echo "::error::Discord file delivery failed (HTTP $HTTP_CODE). The file may exceed the server upload limit or the bot may lack channel permissions."
-            cat discord_response.json
+            echo "::error::Discord rejected the actual file attachment (HTTP $HTTP_CODE). Check bot channel permissions and Discord upload-size limits."
+            python3 - <<'PY'
+          import json
+          try:
+              data = json.load(open('discord_response.json', encoding='utf-8'))
+              print(json.dumps(data, ensure_ascii=False)[:1500])
+          except Exception:
+              print('Discord returned a non-JSON error response.')
+          PY
             exit 1
           fi
-          echo "Subtitle file delivered directly to Discord (HTTP $HTTP_CODE)."
+          echo "Discord accepted the subtitle as a file attachment. No download link was sent."
 
       - name: Report artifact location
         if: always()
