@@ -83,6 +83,7 @@ jobs:
           TRACKERS="$(grep -E '^(udp|https?)://' trackers.txt | sort -u | paste -sd, -)"
           if [ -z "$TRACKERS" ]; then
             echo "ERROR_CODE=TRACKER_LIST_EMPTY: tracker source returned no usable trackers." >&2
+            echo "SUBTITLE_ERROR_CODE=21" >> "$GITHUB_ENV"
             exit 21
           fi
           export TRACKERS
