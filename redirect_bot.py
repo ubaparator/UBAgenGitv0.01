@@ -226,6 +226,7 @@ async def health():
         "ok": True,
         "service": "ubagen-github-bridge",
         "discord_ready": bot.is_ready(),
+        "discord_user_id": str(bot.user.id) if bot.user else None,
         "uptime_seconds": int(time.time() - STARTED_AT),
         "accepting_jobs": ACCEPTING_JOBS,
     }
