@@ -1,0 +1,33 @@
+name: Clean temporary subtitle releases
+
+on:
+  schedule:
+    - cron: "17 3 * * *"
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  cleanup:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Delete subtitle releases older than 48 hours
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPOSITORY: ${{ github.repository }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          now="$(date -u +%s)"
+          gh api "repos/$REPOSITORY/releases?per_page=100" --paginate --jq '.[] | select(.tag_name | startswith("subtitle-download-")) | [.id, .tag_name, .created_at] | @tsv' |
+          while IFS=$'\t' read -r release_id tag created; do
+            [ -n "$release_id" ] || continue
+            created_epoch="$(date -u -d "$created" +%s)"
+            age=$((now - created_epoch))
+            if [ "$age" -ge 172800 ]; then
+              echo "Deleting temporary subtitle release $tag (age: $age seconds)"
+              gh api --method DELETE "repos/$REPOSITORY/releases/$release_id"
+              gh api --method DELETE "repos/$REPOSITORY/git/refs/tags/$tag" || true
+            fi
+          done

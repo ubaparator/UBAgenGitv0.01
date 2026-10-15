@@ -2,6 +2,8 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import hmac
+import uuid
 from collections import deque
 import os
 import time
@@ -47,6 +49,7 @@ REPOSITORY = os.getenv("GITHUB_REPOSITORY", "ubaparator/UBAgenGitv0.01")
 GH_TOKEN = os.getenv("GH_TOKEN", "").strip()
 BOT_TOKEN = normalize_discord_token(os.getenv("DISCORD_BOT_TOKEN"))
 DASHBOARD_API_KEY = os.getenv("DASHBOARD_API_KEY", "")
+SUBTITLE_CALLBACK_SECRET = (os.getenv("SUBTITLE_CALLBACK_SECRET") or os.getenv("DISCORD_BOT_TOKEN", "")).strip()
 STARTED_AT = time.time()
 LAST_ERROR = "Henüz hata kaydı yok."
 ACCEPTING_JOBS = True
@@ -154,7 +157,7 @@ async def dispatch_encode(video_url: str, subtitle_url: Optional[str], codec: st
     return job
 
 
-async def dispatch_subtitle_extraction(magnet_link: str, target_lang: str, subtitle_format: str, discord_channel_id: int) -> dict:
+async def dispatch_subtitle_extraction(magnet_link: str, target_lang: str, subtitle_format: str, discord_channel_id: int, message_id: int, job_id: str) -> dict:
     global LAST_ERROR
     if not GH_TOKEN:
         LAST_ERROR = "GH_TOKEN eksik."
@@ -168,7 +171,7 @@ async def dispatch_subtitle_extraction(magnet_link: str, target_lang: str, subti
         raise HTTPException(status_code=400, detail="Dil kodu 3 küçük harf olmalı; örnek: tur, eng, ger, fre, spa, jpn.")
     if subtitle_format not in {"srt", "ass"}:
         raise HTTPException(status_code=400, detail="Altyazı türü SRT veya ASS olmalı.")
-    payload = {"event_type": "extract_subtitle_request", "client_payload": {"magnet_link": magnet_link, "target_lang": target_lang, "subtitle_format": subtitle_format, "discord_channel_id": str(discord_channel_id), "requested_at": int(time.time())}}
+    payload = {"event_type": "extract_subtitle_request", "client_payload": {"magnet_link": magnet_link, "target_lang": target_lang, "subtitle_format": subtitle_format, "discord_channel_id": str(discord_channel_id), "status_message_id": str(message_id), "job_id": job_id, "requested_at": int(time.time())}}
     headers = {"Authorization": f"Bearer {GH_TOKEN}", "Accept": "application/vnd.github+json", "X-GitHub-Api-Version": "2022-11-28", "User-Agent": "UBAgen-GitHub-Bridge"}
     url = f"https://api.github.com/repos/{REPOSITORY}/dispatches"
     timeout = aiohttp.ClientTimeout(total=20)
@@ -254,15 +257,34 @@ async def altyazi_ayikla(interaction: discord.Interaction, magnet_link: str, for
         await interaction.response.send_message("Bot şu anda yeni iş kabul etmiyor.", ephemeral=False)
         return
     await interaction.response.defer(ephemeral=False, thinking=True)
+    job_id = uuid.uuid4().hex
     try:
-        await dispatch_subtitle_extraction(magnet_link, dil, format.value, interaction.channel_id)
-        await interaction.followup.send(
-            f"Altyazı ayıklama başladı. Dil: **{dil.strip().lower() or 'tur'}** · Tür: **{format.name}**. "
-            "İş bitince dosya bu kanala doğrudan gönderilecek.",
-            ephemeral=False,
+        status_message = await interaction.edit_original_response(
+            content=(
+                "**UBAgen ayıklıyor**\n"
+                "Video adı: torrent bilgisi bekleniyor\n"
+                "İndirme: %0 (başlatılıyor)\n"
+                "ETA: hesaplanıyor | DL: hesaplanıyor\n"
+                "Seeder: bekleniyor\n"
+                "Tracker list: hazırlanıyor\n"
+                "Hata kodu: yok (işlem başlatılıyor)\n"
+                f"Workflow: https://github.com/{REPOSITORY}/actions"
+            )
+        )
+        if not SUBTITLE_CALLBACK_SECRET:
+            global LAST_ERROR
+            LAST_ERROR = "SUBTITLE_CALLBACK_SECRET eksik. Render Environment ve GitHub Actions Secrets bölümüne aynı rastgele değeri ekle."
+            log.error("Subtitle extraction blocked: SUBTITLE_CALLBACK_SECRET missing on Render")
+            await interaction.edit_original_response(content=f"❌ **UBAgen ayıklama başlatılamadı**\nHata kodu: CALLBACK_SECRET_MISSING\n{LAST_ERROR}")
+            return
+        await dispatch_subtitle_extraction(
+            magnet_link, dil, format.value, interaction.channel_id, status_message.id, job_id
         )
     except HTTPException as exc:
-        await interaction.followup.send(str(exc.detail), ephemeral=False)
+        await interaction.edit_original_response(content=f"❌ Altyazı işi başlatılamadı: {str(exc.detail)[:1700]}")
+    except Exception as exc:
+        log.exception("Subtitle request failed")
+        await interaction.edit_original_response(content=f"❌ Altyazı işi başlatılamadı: {type(exc).__name__}")
 
 @tree.command(name="stats", description="Bot ve servis durumunu göster")
 async def stats(interaction: discord.Interaction):
@@ -299,6 +321,57 @@ async def discord_mode(interaction: discord.Interaction, mode: app_commands.Choi
         ephemeral=False,
     )
 
+
+
+@app.post("/api/subtitle-progress")
+async def subtitle_progress(payload: dict, x_subtitle_callback_secret: Optional[str] = Header(default=None)):
+    """Authenticated GitHub Actions callback that edits only the supplied job status message."""
+    global LAST_ERROR
+    job_id = str(payload.get("job_id", "")).strip()
+    channel_id = str(payload.get("channel_id", "")).strip()
+    message_id = str(payload.get("message_id", "")).strip()
+    if not SUBTITLE_CALLBACK_SECRET:
+        LAST_ERROR = "SUBTITLE_CALLBACK_SECRET Render ortamında eksik; canlı altyazı ilerleme güncellemeleri kapalı."
+        log.error("Subtitle callback rejected job=%s: callback secret is not configured on Render", job_id or "unknown")
+        raise HTTPException(status_code=503, detail=LAST_ERROR)
+    if not x_subtitle_callback_secret or not hmac.compare_digest(x_subtitle_callback_secret, SUBTITLE_CALLBACK_SECRET):
+        LAST_ERROR = "Altyazı callback kimlik doğrulaması başarısız (401). Render ve GitHub Actions SUBTITLE_CALLBACK_SECRET aynı olmalı."
+        log.error("Subtitle callback authentication failed job=%s channel=%s message=%s", job_id or "unknown", channel_id or "unknown", message_id or "unknown")
+        raise HTTPException(status_code=401, detail=LAST_ERROR)
+    content = str(payload.get("content", "")).strip()
+    if not (channel_id.isdigit() and message_id.isdigit() and job_id and content):
+        LAST_ERROR = "Altyazı callback alanları eksik/geçersiz (400): job_id, channel_id, message_id, content gerekli."
+        log.error("Subtitle callback malformed payload job=%s channel=%s message=%s", job_id or "unknown", channel_id or "unknown", message_id or "unknown")
+        raise HTTPException(status_code=400, detail=LAST_ERROR)
+    content = content[:1900]
+    if not bot.is_ready():
+        LAST_ERROR = "Altyazı ilerlemesi güncellenemedi: Discord Gateway bağlı değil (503)."
+        log.error("Subtitle callback cannot edit status: Discord not ready; job=%s channel=%s message=%s", job_id, channel_id, message_id)
+        raise HTTPException(status_code=503, detail=LAST_ERROR)
+    try:
+        channel = bot.get_channel(int(channel_id))
+        if channel is None:
+            channel = await bot.fetch_channel(int(channel_id))
+        message = await channel.fetch_message(int(message_id))
+        await message.edit(content=content)
+        log.info("Subtitle progress updated job=%s channel=%s message=%s chars=%s", job_id, channel_id, message_id, len(content))
+    except discord.NotFound as exc:
+        LAST_ERROR = f"Altyazı ilerleme mesajı bulunamadı (Discord HTTP {getattr(exc, 'status', 404)}, code {getattr(exc, 'code', 'unknown')}); mesaj silinmiş olabilir."
+        log.error("Subtitle callback message/channel not found job=%s channel=%s message=%s discord_code=%s", job_id, channel_id, message_id, getattr(exc, "code", "unknown"))
+        raise HTTPException(status_code=404, detail=LAST_ERROR)
+    except discord.Forbidden as exc:
+        LAST_ERROR = f"Botun ilerleme mesajına erişim/düzenleme izni yok (Discord HTTP {getattr(exc, 'status', 403)}, code {getattr(exc, 'code', 'unknown')}). Kanal izinlerini ve doğru bot tokenını kontrol et."
+        log.error("Subtitle callback forbidden job=%s channel=%s message=%s discord_code=%s", job_id, channel_id, message_id, getattr(exc, "code", "unknown"))
+        raise HTTPException(status_code=403, detail=LAST_ERROR)
+    except discord.HTTPException as exc:
+        LAST_ERROR = f"Discord ilerleme güncelleme hatası: HTTP {getattr(exc, 'status', 'unknown')}, code {getattr(exc, 'code', 'unknown')}."
+        log.exception("Subtitle callback Discord HTTP error job=%s channel=%s message=%s", job_id, channel_id, message_id)
+        raise HTTPException(status_code=502, detail=LAST_ERROR)
+    except Exception as exc:
+        LAST_ERROR = f"Altyazı callback hatası: {type(exc).__name__}: {str(exc)[:250]}"
+        log.exception("Subtitle callback could not edit status job=%s channel=%s message=%s", job_id, channel_id, message_id)
+        raise HTTPException(status_code=502, detail=LAST_ERROR)
+    return {"ok": True, "job_id": job_id}
 
 @app.get("/health")
 async def health():

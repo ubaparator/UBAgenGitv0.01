@@ -28,7 +28,7 @@ on:
         type: string
 
 permissions:
-  contents: read
+  contents: write
 
 concurrency:
   group: subtitle-${{ github.run_id }}
@@ -43,46 +43,177 @@ jobs:
       TARGET_LANG: ${{ github.event.client_payload.target_lang || inputs.target_lang || 'tur' }}
       SUBTITLE_FORMAT: ${{ github.event.client_payload.subtitle_format || inputs.subtitle_format || 'srt' }}
       DISCORD_CHANNEL_ID: ${{ github.event.client_payload.discord_channel_id || inputs.discord_channel_id || '' }}
+      STATUS_MESSAGE_ID: ${{ github.event.client_payload.status_message_id || '' }}
+      SUBTITLE_JOB_ID: ${{ github.event.client_payload.job_id || github.run_id }}
+      SUBTITLE_CALLBACK_URL: ${{ secrets.SUBTITLE_CALLBACK_URL || 'https://ubagen-github-bridge.onrender.com/api/subtitle-progress' }}
+      SUBTITLE_CALLBACK_SECRET: ${{ secrets.SUBTITLE_CALLBACK_SECRET || secrets.DISCORD_BOT_TOKEN }}
+      WORKFLOW_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
     steps:
       - name: Install aria2 and FFmpeg
+        id: install
+        shell: bash
         run: |
+          set -Eeuo pipefail
+          trap 'rc=$?; echo "SUBTITLE_ERROR_CODE=$rc" >> "$GITHUB_ENV"; echo "::error::Dependency installation failed with exit code $rc"; exit "$rc"' ERR
           sudo apt-get update -qq
           sudo apt-get install -y aria2 ffmpeg curl
 
       - name: Validate request and download torrent
+        id: download
         shell: bash
         run: |
-          set -euo pipefail
+          set -Eeuo pipefail
+          trap 'rc=$?; echo "SUBTITLE_ERROR_CODE=$rc" >> "$GITHUB_ENV"; echo "::error::Download/validation step exited with code $rc"; exit "$rc"' ERR
           python3 - <<'PY'
           import os, re, sys
           magnet = os.environ.get('MAGNET_LINK', '').strip()
           lang = os.environ.get('TARGET_LANG', 'tur').strip().lower() or 'tur'
           fmt = os.environ.get('SUBTITLE_FORMAT', 'srt').strip().lower() or 'srt'
           if fmt not in {'srt', 'ass'}:
-              sys.exit('Subtitle format must be srt or ass.')
+              sys.exit('ERROR_CODE=INVALID_FORMAT: Subtitle format must be SRT or ASS.')
           if not magnet.startswith('magnet:?') or len(magnet) > 4000 or '\n' in magnet or '\r' in magnet:
-              sys.exit('Invalid magnet link.')
+              sys.exit('ERROR_CODE=INVALID_MAGNET: Invalid magnet link.')
           if not re.fullmatch(r'[a-z]{3}', lang):
-              sys.exit('Language must be a three-letter code such as tur or eng.')
+              sys.exit('ERROR_CODE=INVALID_LANGUAGE: Language must be a three-letter code such as tur or eng.')
           print('Request validated. Target language:', lang, '| format:', fmt)
           PY
           mkdir -p download_temp
-          curl -fsSL --retry 3 https://raw.githubusercontent.com/ngosang/trackerslist/master/trackers_best.txt -o trackers.txt
-          TRACKERS="$(grep -v '^$' trackers.txt | paste -sd, -)"
-          if [ -z "$TRACKERS" ]; then echo 'Could not load tracker list'; exit 1; fi
-          timeout 4h aria2c --dir=download_temp --seed-time=0 --max-connection-per-server=16 --split=16 --enable-dht=true --bt-max-peers=200 --bt-tracker="$TRACKERS" --summary-interval=15 "$MAGNET_LINK"
-
+          curl --fail --silent --show-error --location --retry 3 --retry-all-errors --connect-timeout 15 --max-time 60 \
+            https://raw.githubusercontent.com/ngosang/trackerslist/master/trackers_best.txt -o trackers.txt
+          TRACKERS="$(grep -E '^(udp|https?)://' trackers.txt | sort -u | paste -sd, -)"
+          if [ -z "$TRACKERS" ]; then
+            echo "ERROR_CODE=TRACKER_LIST_EMPTY: tracker source returned no usable trackers." >&2
+            echo "SUBTITLE_ERROR_CODE=21" >> "$GITHUB_ENV"
+            exit 21
+          fi
+          export TRACKERS
+          python3 - <<'PY'
+          import json, os, re, subprocess, sys, time, urllib.request, urllib.parse
+          def report(content):
+              channel = os.environ.get('DISCORD_CHANNEL_ID', '')
+              message = os.environ.get('STATUS_MESSAGE_ID', '')
+              secret = os.environ.get('SUBTITLE_CALLBACK_SECRET', '')
+              url = os.environ.get('SUBTITLE_CALLBACK_URL', '')
+              if not (channel.isdigit() and message.isdigit() and secret and url):
+                  print('CALLBACK_CONFIG_ERROR: missing channel/message/secret/url; live Discord updates are disabled.')
+                  return False
+              body = json.dumps({'job_id': os.environ.get('SUBTITLE_JOB_ID', ''), 'channel_id': channel, 'message_id': message, 'content': content}).encode()
+              req = urllib.request.Request(url, data=body, headers={'Content-Type':'application/json','X-Subtitle-Callback-Secret':secret}, method='POST')
+              try:
+                  with urllib.request.urlopen(req, timeout=10) as response:
+                      print('PROGRESS_CALLBACK_HTTP=' + str(response.status))
+                      return response.status < 300
+              except Exception as exc:
+                  print('PROGRESS_CALLBACK_ERROR=' + type(exc).__name__ + ': ' + str(exc)[:300])
+                  return False
+          tracker_urls = [x.strip() for x in os.environ.get('TRACKERS','').split(',') if x.strip()]
+          tracker_hosts = []
+          for item in tracker_urls[:4]:
+              parsed = urllib.parse.urlparse(item)
+              tracker_hosts.append(parsed.netloc or item[:60])
+          tracker_line = f'Tracker list: {len(tracker_urls)} tracker yüklendi (' + (', '.join(tracker_hosts) if tracker_hosts else 'yok') + ')'
+          workflow_url = os.environ.get('WORKFLOW_URL','')
+          video_name = urllib.parse.parse_qs(urllib.parse.urlparse(os.environ['MAGNET_LINK']).query).get('dn', ['torrent içinden bekleniyor'])[0][:180]
+          report('**UBAgen ayıklıyor**\nVideo adı: ' + video_name + '\n' + tracker_line + '\nWorkflow: ' + workflow_url + '\nAşama: Torrent bağlantısı kuruluyor...')
+          cmd = ['timeout','4h','stdbuf','-o0','-e0','aria2c','--console-log-level=notice','--show-console-readout=true','--dir=download_temp','--seed-time=0','--max-connection-per-server=16','--split=16','--enable-dht=true','--bt-max-peers=200','--bt-tracker='+os.environ['TRACKERS'],'--summary-interval=5',os.environ['MAGNET_LINK']]
+          proc = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, bufsize=0)
+          last_report = 0.0
+          last_status = ''
+          buffer = ''
+          percent_re = re.compile(r'\((\d+(?:\.\d+)?)%\)|(?<![\w.])(\d+(?:\.\d+)?)%')
+          dl_re = re.compile(r'\bDL:([^\s\]]+)')
+          eta_re = re.compile(r'\bETA:([^\s\]]+)')
+          seed_re = re.compile(r'\b(?:SEED|SD):(\d+)')
+          peer_re = re.compile(r'\b(?:CN|PEERS?):(\d+)')
+          size_re = re.compile(r'(\d+(?:\.\d+)?\s*[KMGTP]?i?B)/(\d+(?:\.\d+)?\s*[KMGTP]?i?B)')
+          def consume(line):
+              global last_report, last_status
+              line = line.strip()
+              if not line: return
+              print('ARIA2: ' + line, flush=True)
+              global video_name
+              name_match = re.search(r'([^/]+[.](?:mkv|mp4))', line, re.IGNORECASE)
+              if name_match:
+                  video_name = name_match.group(1)[:180]
+              now = time.monotonic()
+              if now - last_report < 4: return
+              match = percent_re.search(line)
+              if not match: return
+              raw_pct = match.group(1) or match.group(2)
+              pct = max(0, min(100, int(float(raw_pct))))
+              dl = dl_re.search(line)
+              eta = eta_re.search(line)
+              seed = seed_re.search(line)
+              peers = peer_re.search(line)
+              size = size_re.search(line)
+              dl_text = (dl.group(1) + '/s') if dl else 'hesaplanıyor'
+              eta_text = eta.group(1) if eta else 'hesaplanıyor'
+              seed_text = seed.group(1) if seed else 'bilinmiyor'
+              peer_text = peers.group(1) if peers else 'bilinmiyor'
+              size_text = f'{size.group(1)} / {size.group(2)}' if size else 'bilinmiyor'
+              bar = '█' * (pct // 10) + '░' * (10 - pct // 10)
+              status = ('**UBAgen ayıklıyor**\nVideo adı: ' + video_name +
+                        f'\nİndirme: %{pct} [{bar}]' +
+                        f'\nETA: {eta_text} | DL: {dl_text}' +
+                        f'\nSeeder: {seed_text} | Bağlantı: {peer_text}' +
+                        f'\nİndirilen: {size_text}' +
+                        '\nHata kodu: yok (işlem sürüyor)' + '\n' + tracker_line + '\nWorkflow: ' + workflow_url)
+              if status != last_status:
+                  report(status)
+                  last_status = status
+                  last_report = now
+          try:
+              fd = proc.stdout.fileno()
+              while True:
+                  chunk = os.read(fd, 4096)
+                  if not chunk: break
+                  buffer += chunk.decode('utf-8', errors='replace')
+                  parts = re.split(r'[\r\n]+', buffer)
+                  buffer = parts.pop()
+                  for line in parts: consume(line)
+              if buffer: consume(buffer)
+              code = proc.wait()
+          except Exception:
+              proc.kill()
+              raise
+          if code:
+              report('❌ **UBAgen ayıklama başarısız**\nAşama: Torrent indirme\nHata kodu: ' + str(code) +
+                     '\n' + tracker_line + '\nWorkflow günlükleri: ' + workflow_url)
+              sys.exit(code)
+          report('**UBAgen ayıklıyor**\nVideo adı: ' + video_name +
+                 '\nİndirme: %100\nAşama: İndirme tamamlandı, dosya adı/altyazı akışı bulunuyor...' +
+                 '\n' + tracker_line + '\nWorkflow: ' + workflow_url)
+          PY
       - name: Extract and clean subtitle
+        id: extract
         shell: bash
         run: |
-          set -euo pipefail
+          set -Eeuo pipefail
+          trap 'rc=$?; echo "SUBTITLE_ERROR_CODE=$rc" >> "$GITHUB_ENV"; echo "::error::Extraction step exited with code $rc"; exit "$rc"' ERR
           python3 - <<'PY'
-          import glob, json, os, re, subprocess, sys
+          import glob, json, os, re, subprocess, sys, urllib.request, urllib.parse
           lang = (os.environ.get('TARGET_LANG', 'tur').strip().lower() or 'tur')
           videos = sorted(glob.glob('download_temp/**/*.mkv', recursive=True) + glob.glob('download_temp/**/*.mp4', recursive=True))
           if not videos:
               sys.exit('No MKV/MP4 video was found in the downloaded torrent.')
           video = videos[0]
+          channel = os.environ.get('DISCORD_CHANNEL_ID', '')
+          message = os.environ.get('STATUS_MESSAGE_ID', '')
+          secret = os.environ.get('SUBTITLE_CALLBACK_SECRET', '')
+          callback_url = os.environ.get('SUBTITLE_CALLBACK_URL', '')
+          workflow_url = os.environ.get('WORKFLOW_URL', '')
+          tracker_count = os.environ.get('TRACKER_COUNT', '0')
+          tracker_display = os.environ.get('TRACKER_DISPLAY', 'bilinmiyor')
+          def report_stage(stage):
+              if not (channel.isdigit() and message.isdigit() and secret and callback_url):
+                  return
+              payload = json.dumps({'job_id': os.environ.get('SUBTITLE_JOB_ID', ''), 'channel_id': channel, 'message_id': message, 'content': f'**UBAgen ayıklıyor**\nVideo adı: {os.path.basename(video)}\n{stage}\nTracker list: {tracker_count} tracker ({tracker_display})\nWorkflow: {workflow_url}'}).encode()
+              request = urllib.request.Request(callback_url, data=payload, headers={'Content-Type':'application/json','X-Subtitle-Callback-Secret':secret}, method='POST')
+              try:
+                  with urllib.request.urlopen(request, timeout=8) as response: print('Extraction-stage callback HTTP', response.status)
+              except Exception as exc:
+                  print('Extraction-stage callback unavailable:', type(exc).__name__)
+          report_stage('%100 indi, altyazı akışı aranıyor...')
           probe = subprocess.run(['ffprobe','-v','quiet','-print_format','json','-show_streams','-select_streams','s',video],capture_output=True,text=True)
           try:
               streams = json.loads(probe.stdout or '{}').get('streams', [])
@@ -92,6 +223,7 @@ jobs:
           fmt = (os.environ.get('SUBTITLE_FORMAT', 'srt').strip().lower() or 'srt')
           output = f'extracted_sub_{lang}.{fmt}'
           candidates = ([selected] if selected is not None else []) + [i for i in range(len(streams)) if i != selected]
+          report_stage('Altyazı ayıklanıyor...')
           success = False
           codec = 'ass' if fmt == 'ass' else 'srt'
           for stream_index in candidates:
@@ -102,6 +234,7 @@ jobs:
               if os.path.exists(output): os.remove(output)
           if not success:
               sys.exit(f'No exportable {fmt.upper()} subtitle stream found for language {lang}; first-stream fallback also failed.')
+          report_stage('Çıktı doğrulanıyor...')
           if fmt == 'srt':
               with open(output, 'r', encoding='utf-8', errors='ignore') as f:
                   content = f.read()
@@ -120,51 +253,147 @@ jobs:
           if-no-files-found: error
           retention-days: 1
 
-      - name: Send subtitle file as a Discord attachment (no links)
+      - name: Send subtitle file as a Discord attachment
+        id: discord_delivery
         if: success()
         env:
           DISCORD_BOT_TOKEN: ${{ secrets.DISCORD_BOT_TOKEN }}
         shell: bash
         run: |
-          set -euo pipefail
-          if [ -z "${DISCORD_BOT_TOKEN:-}" ]; then
-            echo "::error::Cannot attach the subtitle: repository secret DISCORD_BOT_TOKEN is missing. Add it in Settings > Secrets and variables > Actions."
-            exit 1
-          fi
-          if [ -z "${DISCORD_CHANNEL_ID:-}" ]; then
-            echo "::error::Cannot attach the subtitle: Discord channel ID was not passed to this workflow."
-            exit 1
-          fi
+          set -uo pipefail
           OUTPUT="$(find . -maxdepth 1 -type f -name 'extracted_sub_*.*' -print -quit)"
           if [ -z "$OUTPUT" ]; then
-            echo "::error::Cannot attach the subtitle: extracted output file was not found."
-            exit 1
+            echo "No extracted subtitle file found." >&2
+            echo "sent=false" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          if [ -z "${DISCORD_BOT_TOKEN:-}" ] || [ -z "${DISCORD_CHANNEL_ID:-}" ]; then
+            echo "Discord attachment unavailable: token or channel ID missing; using direct download fallback."
+            echo "sent=false" >> "$GITHUB_OUTPUT"
+            exit 0
           fi
           python3 - "$OUTPUT" <<'PY'
           import json, os, sys
-          output = sys.argv[1]
           with open('discord_payload.json', 'w', encoding='utf-8') as f:
-              json.dump({'content': f'✅ Altyazı dosyan hazır: **{os.path.basename(output)}**'}, f, ensure_ascii=False)
+              json.dump({'content': f'✅ Altyazı dosyan hazır: **{os.path.basename(sys.argv[1])}**'}, f, ensure_ascii=False)
           PY
           HTTP_CODE="$(curl --silent --show-error --output discord_response.json --write-out '%{http_code}' \
             --request POST \
             --header "Authorization: Bot ${DISCORD_BOT_TOKEN}" \
             --form "payload_json=$(cat discord_payload.json)" \
             --form "files[0]=@$OUTPUT;type=application/octet-stream" \
-            "https://discord.com/api/v10/channels/${DISCORD_CHANNEL_ID}/messages")"
-          if [ "$HTTP_CODE" -lt 200 ] || [ "$HTTP_CODE" -ge 300 ]; then
-            echo "::error::Discord rejected the actual file attachment (HTTP $HTTP_CODE). Check bot channel permissions and Discord upload-size limits."
-            python3 - <<'PY'
+            "https://discord.com/api/v10/channels/${DISCORD_CHANNEL_ID}/messages" || true)"
+          if [[ "$HTTP_CODE" =~ ^2[0-9][0-9]$ ]]; then
+            echo "Discord accepted the subtitle attachment."
+            echo "sent=true" >> "$GITHUB_OUTPUT"
+            echo "http_code=$HTTP_CODE" >> "$GITHUB_OUTPUT"
+            echo "discord_error_code=0" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          echo "Discord attachment failed (HTTP ${HTTP_CODE:-unknown}); direct-file fallback will be attempted."
+          cat discord_response.json 2>/dev/null | head -c 700 || true
+          echo "sent=false" >> "$GITHUB_OUTPUT"
+          echo "http_code=${HTTP_CODE:-unknown}" >> "$GITHUB_OUTPUT"
+          API_ERROR_CODE="$(python3 - <<'PY'
           import json
           try:
-              data = json.load(open('discord_response.json', encoding='utf-8'))
-              print(json.dumps(data, ensure_ascii=False)[:1500])
+              print(json.load(open('discord_response.json', encoding='utf-8')).get('code', 'unknown'))
           except Exception:
-              print('Discord returned a non-JSON error response.')
+              print('unknown')
           PY
+          )"
+          API_ERROR_MESSAGE="$(python3 - <<'PY'
+          import json
+          try:
+              print(str(json.load(open('discord_response.json', encoding='utf-8')).get('message', 'unknown')).replace('\n',' ')[:100])
+          except Exception:
+              print('unknown')
+          PY
+          )"
+          echo "discord_error_code=$API_ERROR_CODE" >> "$GITHUB_OUTPUT"
+          echo "discord_error_message=$API_ERROR_MESSAGE" >> "$GITHUB_OUTPUT"
+
+      - name: Publish direct subtitle download as a Release asset
+        id: direct_download
+        if: success() && steps.discord_delivery.outputs.sent != 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          trap 'rc=$?; echo "SUBTITLE_ERROR_CODE=$rc" >> "$GITHUB_ENV"; echo "::error::Direct download fallback failed with exit code $rc"; exit "$rc"' ERR
+          OUTPUT="$(find . -maxdepth 1 -type f -name 'extracted_sub_*.*' -print -quit)"
+          if [ -z "$OUTPUT" ] || [ ! -s "$OUTPUT" ]; then
+            echo "::error::Subtitle output is missing or empty."
             exit 1
           fi
-          echo "Discord accepted the subtitle as a file attachment. No download link was sent."
+          VISIBILITY="$(gh api "repos/$GITHUB_REPOSITORY" --jq '.visibility')"
+          if [ "$VISIBILITY" != "public" ]; then
+            echo "::error::Direct unauthenticated download is unavailable because the repository is not public."
+            exit 1
+          fi
+          TAG="subtitle-download-${GITHUB_RUN_ID}"
+          gh release create "$TAG" "$OUTPUT" --repo "$GITHUB_REPOSITORY" \
+            --title "Temporary subtitle download ${GITHUB_RUN_ID}" \
+            --notes "Temporary direct subtitle download. Automated cleanup removes this release after 48 hours."
+          URL="https://github.com/${GITHUB_REPOSITORY}/releases/download/${TAG}/$(basename "$OUTPUT")"
+          echo "url=$URL" >> "$GITHUB_OUTPUT"
+          echo "Published direct file URL (not a ZIP): $URL"
+
+      - name: Update status message with final result
+        if: always()
+        env:
+          DIRECT_URL: ${{ steps.direct_download.outputs.url }}
+          ATTACHMENT_SENT: ${{ steps.discord_delivery.outputs.sent }}
+          JOB_STATUS: ${{ job.status }}
+          INSTALL_OUTCOME: ${{ steps.install.outcome }}
+          DOWNLOAD_OUTCOME: ${{ steps.download.outcome }}
+          EXTRACT_OUTCOME: ${{ steps.extract.outcome }}
+          DELIVERY_OUTCOME: ${{ steps.discord_delivery.outcome }}
+          DISCORD_HTTP_CODE: ${{ steps.discord_delivery.outputs.http_code }}
+          DISCORD_API_ERROR_CODE: ${{ steps.discord_delivery.outputs.discord_error_code }}
+          DISCORD_API_ERROR_MESSAGE: ${{ steps.discord_delivery.outputs.discord_error_message }}
+        shell: bash
+        run: |
+          python3 - <<'PY'
+          import json, os, urllib.request
+          channel=os.getenv('DISCORD_CHANNEL_ID','')
+          message=os.getenv('STATUS_MESSAGE_ID','')
+          secret=os.getenv('SUBTITLE_CALLBACK_SECRET','')
+          url=os.getenv('SUBTITLE_CALLBACK_URL','')
+          if not (channel.isdigit() and message.isdigit() and secret and url):
+              print('Final callback skipped: callback settings or message IDs are unavailable.')
+              raise SystemExit(0)
+          workflow=os.getenv('WORKFLOW_URL','')
+          tracker_count=os.getenv('TRACKER_COUNT','0')
+          tracker_display=os.getenv('TRACKER_DISPLAY','bilinmiyor')
+          error_code=os.getenv('SUBTITLE_ERROR_CODE','ACTIONS_STEP_FAILURE')
+          discord_http=os.getenv('DISCORD_HTTP_CODE','not-attempted')
+          discord_api_code=os.getenv('DISCORD_API_ERROR_CODE','none')
+          discord_api_message=os.getenv('DISCORD_API_ERROR_MESSAGE','')
+          if os.getenv('JOB_STATUS') != 'success':
+              failed_stage = 'bağımlılık kurulumu' if os.getenv('INSTALL_OUTCOME') == 'failure' else ('indirme' if os.getenv('DOWNLOAD_OUTCOME') == 'failure' else ('altyazı ayıklama' if os.getenv('EXTRACT_OUTCOME') == 'failure' else 'dosya teslimi/iş akışı'))
+              content=('❌ **UBAgen ayıklama başarısız**\nAşama: '+failed_stage+
+                       '\nHata kodu: '+error_code+
+                       '\nTracker list: '+tracker_count+' tracker ('+tracker_display+')'+
+                       '\nWorkflow günlükleri: '+workflow)
+          elif os.getenv('ATTACHMENT_SENT') == 'true':
+              content='✅ **UBAgen ayıklama tamamlandı**\nAltyazı dosyası bu kanala eklendi.\nHata kodu: yok (Discord HTTP '+discord_http+', API '+discord_api_code+')\nTracker list: '+tracker_count+' tracker ('+tracker_display+')\nWorkflow: '+workflow
+          else:
+              direct=os.getenv('DIRECT_URL','')
+              if not direct.startswith('https://github.com/'):
+                  content=('❌ **UBAgen ayıklama tamamlandı ancak dosya teslim edilemedi.**\nHata kodu: DIRECT_LINK_NOT_CREATED; Discord HTTP '+discord_http+', API '+discord_api_code+' '+discord_api_message+';\nTracker list: '+tracker_count+' tracker ('+tracker_display+')'+
+                           '\nTracker list: '+tracker_count+' tracker ('+tracker_display+')'+
+                           '\nWorkflow günlükleri: '+workflow)
+              else:
+                  content='✅ **UBAgen ayıklama tamamlandı**\n[Altyazıyı doğrudan indir (ZIP değil)]('+direct+')\nDosya teslimi: Discord HTTP '+discord_http+', API '+discord_api_code+' '+discord_api_message+'; doğrudan bağlantı yedeği kullanıldı.\nBağlantı geçicidir; 48 saat içinde kaldırılır.\nTracker list: '+tracker_count+' tracker ('+tracker_display+')\nWorkflow: '+workflow
+          body=json.dumps({'job_id':os.getenv('SUBTITLE_JOB_ID',''),'channel_id':channel,'message_id':message,'content':content}).encode()
+          req=urllib.request.Request(url,data=body,headers={'Content-Type':'application/json','X-Subtitle-Callback-Secret':secret},method='POST')
+          try:
+              with urllib.request.urlopen(req,timeout=10) as r: print('Final status callback HTTP',r.status)
+          except Exception as exc:
+              print('Final status callback failed:',type(exc).__name__)
+          PY
 
       - name: Report artifact location
         if: always()
