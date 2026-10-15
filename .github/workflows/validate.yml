@@ -6,12 +6,39 @@ on:
   pull_request:
     branches: [main]
   workflow_dispatch:
+  schedule:
+    # Best effort: GitHub scheduled workflows can be delayed; exact 14m30s is not guaranteed.
+    - cron: "*/14 * * * *"
 
 permissions:
   contents: read
 
 jobs:
+  keepalive:
+    if: github.event_name == 'schedule'
+    runs-on: ubuntu-latest
+    timeout-minutes: 2
+    steps:
+      - name: Ping Render health endpoint
+        shell: bash
+        run: |
+          set -u
+          url="https://ubagen-github-bridge.onrender.com/health"
+          echo "Pinging Render health endpoint: $url"
+          status="$(curl --silent --show-error --max-time 25 --output health.json --write-out '%{http_code}' "$url")" || {
+            echo "Health request failed at transport level."
+            exit 1
+          }
+          cat health.json
+          echo
+          echo "HTTP status: $status"
+          if [ "$status" -ge 500 ]; then
+            echo "Render endpoint returned an unhealthy/server error status."
+            exit 1
+          fi
+
   python:
+    if: github.event_name != 'schedule'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4

@@ -79,6 +79,37 @@ def public_http_url(value: str) -> bool:
     return value.startswith("https://") or value.startswith("http://")
 
 
+def github_dispatch_error(action: str, status: int, body: str) -> str:
+    """Return actionable diagnostics without ever exposing the configured token."""
+    global LAST_ERROR
+    detail = (body or "").strip()
+    if status == 403 and ("Resource not accessible" in detail or "personal access token" in detail.lower()):
+        message = (
+            f"GitHub {action} HTTP 403: GH_TOKEN yetkisi yetersiz. "
+            "Render > Environment > GH_TOKEN değerini kontrol et. Fine-grained PAT için "
+            "hedef repo ubaparator/UBAgenGitv0.01 seçili olmalı ve Repository permissions "
+            "altında Contents = Read and write olmalı (Metadata = Read-only). "
+            "Classic PAT kullanıyorsan private repo için repo scope gerekir. "
+            "Tokenı değiştirdikten sonra Render servisini redeploy et. Token loglanmadı."
+        )
+    elif status == 401:
+        message = (
+            f"GitHub {action} HTTP 401: GH_TOKEN geçersiz, süresi dolmuş veya iptal edilmiş. "
+            "GitHub'da tokenı yenile, Render > Environment içindeki GH_TOKEN değerini güncelle "
+            "ve servisi redeploy et. Token loglanmadı."
+        )
+    elif status == 404:
+        message = (
+            f"GitHub {action} HTTP 404: hedef depo bulunamadı veya token depoya erişemiyor. "
+            f"GITHUB_REPOSITORY/REPOSITORY değerini kontrol et (mevcut hedef: {REPOSITORY})."
+        )
+    else:
+        message = f"GitHub {action} HTTP {status}: {detail[:250]}"
+    LAST_ERROR = message
+    log.error("%s", message)
+    return message
+
+
 async def dispatch_encode(video_url: str, subtitle_url: Optional[str], codec: str) -> dict:
     global LAST_ERROR
     if not GH_TOKEN:
@@ -110,9 +141,8 @@ async def dispatch_encode(video_url: str, subtitle_url: Optional[str], codec: st
         async with session.post(url, headers=headers, json=payload) as response:
             body = await response.text()
             if response.status != 204:
-                LAST_ERROR = f"GitHub dispatch HTTP {response.status}: {body[:350]}"
-                log.error(LAST_ERROR)
-                raise HTTPException(status_code=502, detail="GitHub Actions işi başlatılamadı. /log komutuna bak.")
+                message = github_dispatch_error("dispatch", response.status, body)
+                raise HTTPException(status_code=502, detail=message)
     job = {
         "requested_at": int(time.time()),
         "codec": codec,
@@ -144,9 +174,8 @@ async def dispatch_subtitle_extraction(magnet_link: str, target_lang: str) -> di
         async with session.post(url, headers=headers, json=payload) as response:
             body = await response.text()
             if response.status != 204:
-                LAST_ERROR = f"GitHub subtitle dispatch HTTP {response.status}: {body[:350]}"
-                log.error(LAST_ERROR)
-                raise HTTPException(status_code=502, detail="Altyazı ayıklama işi GitHub Actions'a gönderilemedi. /log komutuna bak.")
+                message = github_dispatch_error("subtitle dispatch", response.status, body)
+                raise HTTPException(status_code=502, detail=message)
     job = {"requested_at": int(time.time()), "codec": "subtitle-extraction", "has_subtitle": True, "status": f"GitHub Actions'a gönderildi ({target_lang})"}
     RECENT_JOBS.insert(0, job)
     del RECENT_JOBS[MAX_JOBS:]
@@ -188,37 +217,37 @@ async def encodeal(
     subtitle: Optional[discord.Attachment] = None,
 ):
     if not ACCEPTING_JOBS:
-        await interaction.response.send_message("Bot şu anda yeni iş kabul etmiyor.", ephemeral=True)
+        await interaction.response.send_message("Bot şu anda yeni iş kabul etmiyor.", ephemeral=False)
         return
     if not video.content_type or not (video.content_type.startswith("video/") or video.filename.lower().endswith((".mp4", ".mkv", ".mov", ".webm", ".avi"))):
-        await interaction.response.send_message("Video dosyası eklemelisin.", ephemeral=True)
+        await interaction.response.send_message("Video dosyası eklemelisin.", ephemeral=False)
         return
     subtitle_url = None
     if subtitle:
         if not subtitle.filename.lower().endswith((".ass", ".ssa", ".srt")):
-            await interaction.response.send_message("Altyazı dosyası .ass, .ssa veya .srt olmalı.", ephemeral=True)
+            await interaction.response.send_message("Altyazı dosyası .ass, .ssa veya .srt olmalı.", ephemeral=False)
             return
         subtitle_url = subtitle.url
-    await interaction.response.defer(ephemeral=True, thinking=True)
+    await interaction.response.defer(ephemeral=False, thinking=True)
     try:
         job = await dispatch_encode(video.url, subtitle_url, codec.value)
         await interaction.followup.send(
             f"İş GitHub Actions'a gönderildi. Codec: {codec.name}. "
             f"Altyazı: {'var' if subtitle_url else 'yok'}. "
             f"Durum: {job['status']}. İşleri Actions sekmesinden izleyebilirsin.",
-            ephemeral=True,
+            ephemeral=False,
         )
     except HTTPException as exc:
-        await interaction.followup.send(str(exc.detail), ephemeral=True)
+        await interaction.followup.send(str(exc.detail), ephemeral=False)
 
 
 @tree.command(name="altyazi_ayikla", description="Magnet bağlantısından altyazıyı GitHub Actions üzerinde ayıkla")
 @app_commands.describe(magnet_link="Torrent magnet bağlantısı (magnet:? ile başlamalı)", dil="Üç harfli altyazı dili kodu; varsayılan tur")
 async def altyazi_ayikla(interaction: discord.Interaction, magnet_link: str, dil: str = "tur"):
     if not ACCEPTING_JOBS:
-        await interaction.response.send_message("Bot şu anda yeni iş kabul etmiyor.", ephemeral=True)
+        await interaction.response.send_message("Bot şu anda yeni iş kabul etmiyor.", ephemeral=False)
         return
-    await interaction.response.defer(ephemeral=True, thinking=True)
+    await interaction.response.defer(ephemeral=False, thinking=True)
     try:
         await dispatch_subtitle_extraction(magnet_link, dil)
         await interaction.followup.send(
@@ -226,10 +255,10 @@ async def altyazi_ayikla(interaction: discord.Interaction, magnet_link: str, dil
             "Render yalnızca isteği yönlendirdi; indirme ve FFmpeg işlemleri GitHub Actions runner'ında çalışacak. "
             "İş tamamlanınca dosyayı GitHub Actions → Extract subtitle → Artifacts bölümünden indir: "
             "https://github.com/ubaparator/UBAgenGitv0.01/actions",
-            ephemeral=True,
+            ephemeral=False,
         )
     except HTTPException as exc:
-        await interaction.followup.send(str(exc.detail), ephemeral=True)
+        await interaction.followup.send(str(exc.detail), ephemeral=False)
 
 
 @tree.command(name="stats", description="Bot ve servis durumunu göster")
@@ -247,7 +276,7 @@ async def stats(interaction: discord.Interaction):
 @tree.command(name="log", description="Son hata/eksik ayar bilgisini göster")
 async def log_command(interaction: discord.Interaction):
     message = LAST_ERROR[:850]
-    await interaction.response.send_message(f"Son hata: {message}", ephemeral=True)
+    await interaction.response.send_message(f"Son hata: {message}", ephemeral=False)
 
 
 @tree.command(name="discord", description="Yeni encode işlerini aç/kapat")
@@ -259,12 +288,12 @@ async def log_command(interaction: discord.Interaction):
 async def discord_mode(interaction: discord.Interaction, mode: app_commands.Choice[str]):
     global ACCEPTING_JOBS
     if not interaction.user.guild_permissions.manage_guild:
-        await interaction.response.send_message("Bu komut için Sunucuyu Yönet izni gerekli.", ephemeral=True)
+        await interaction.response.send_message("Bu komut için Sunucuyu Yönet izni gerekli.", ephemeral=False)
         return
     ACCEPTING_JOBS = mode.value == "on"
     await interaction.response.send_message(
         f"Yeni iş kabulü {'açıldı' if ACCEPTING_JOBS else 'kapatıldı'}. Bot bağlantısı kesilmedi.",
-        ephemeral=True,
+        ephemeral=False,
     )
 
 
