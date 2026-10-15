@@ -82,7 +82,6 @@ jobs:
             exit 21
           fi
           export TRACKERS
-          export WORKFLOW_URL="\${{ github.server_url }}/\${{ github.repository }}/actions/runs/\${{ github.run_id }}"
           python3 - <<'PY'
           import json, os, re, subprocess, sys, time, urllib.request, urllib.parse
           def report(content):
@@ -199,7 +198,7 @@ jobs:
           def report_stage(stage):
               if not (channel.isdigit() and message.isdigit() and secret and callback_url):
                   return
-              payload = json.dumps({'job_id': os.environ.get('SUBTITLE_JOB_ID', ''), 'channel_id': channel, 'message_id': message, 'content': f'**UBAgen ayıklıyor**\nVideo adı: {os.path.basename(video)}\n{stage}'}).encode()
+              payload = json.dumps({'job_id': os.environ.get('SUBTITLE_JOB_ID', ''), 'channel_id': channel, 'message_id': message, 'content': f'**UBAgen ayıklıyor**\nVideo adı: {os.path.basename(video)}\n{stage}\nTracker list: {tracker_count} tracker ({tracker_display})\nWorkflow: {workflow_url}'}).encode()
               request = urllib.request.Request(callback_url, data=payload, headers={'Content-Type':'application/json','X-Subtitle-Callback-Secret':secret}, method='POST')
               try:
                   with urllib.request.urlopen(request, timeout=8) as response: print('Extraction-stage callback HTTP', response.status)
@@ -337,20 +336,20 @@ jobs:
           error_code=os.getenv('SUBTITLE_ERROR_CODE','not-reported')
           if os.getenv('JOB_STATUS') != 'success':
               failed_stage = 'indirme' if os.getenv('DOWNLOAD_OUTCOME') == 'failure' else ('altyazı ayıklama' if os.getenv('EXTRACT_OUTCOME') == 'failure' else 'dosya teslimi/iş akışı')
-              content=('❌ **UBAgen ayıklama başarısız**\\nAşama: '+failed_stage+
-                       '\\nHata kodu: '+error_code+
-                       '\\nTracker list: '+tracker_count+' tracker ('+tracker_display+')'+
-                       '\\nWorkflow günlükleri: '+workflow)
+              content=('❌ **UBAgen ayıklama başarısız**\nAşama: '+failed_stage+
+                       '\nHata kodu: '+error_code+
+                       '\nTracker list: '+tracker_count+' tracker ('+tracker_display+')'+
+                       '\nWorkflow günlükleri: '+workflow)
           elif os.getenv('ATTACHMENT_SENT') == 'true':
-              content='✅ **UBAgen ayıklama tamamlandı**\\nAltyazı dosyası bu kanala eklendi.\\nTracker list: '+tracker_count+' tracker ('+tracker_display+')\\nWorkflow: '+workflow
+              content='✅ **UBAgen ayıklama tamamlandı**\nAltyazı dosyası bu kanala eklendi.\nTracker list: '+tracker_count+' tracker ('+tracker_display+')\nWorkflow: '+workflow
           else:
               direct=os.getenv('DIRECT_URL','')
               if not direct.startswith('https://github.com/'):
-                  content=('❌ **UBAgen ayıklama tamamlandı ancak dosya teslim edilemedi.**\\nHata kodu: DIRECT_LINK_NOT_CREATED'+
-                           '\\nTracker list: '+tracker_count+' tracker ('+tracker_display+')'+
-                           '\\nWorkflow günlükleri: '+workflow)
+                  content=('❌ **UBAgen ayıklama tamamlandı ancak dosya teslim edilemedi.**\nHata kodu: DIRECT_LINK_NOT_CREATED'+
+                           '\nTracker list: '+tracker_count+' tracker ('+tracker_display+')'+
+                           '\nWorkflow günlükleri: '+workflow)
               else:
-                  content='✅ **UBAgen ayıklama tamamlandı**\\n[Altyazıyı doğrudan indir (ZIP değil)]('+direct+')\\nBağlantı geçicidir; 48 saat içinde kaldırılır.\\nTracker list: '+tracker_count+' tracker ('+tracker_display+')\\nWorkflow: '+workflow
+                  content='✅ **UBAgen ayıklama tamamlandı**\n[Altyazıyı doğrudan indir (ZIP değil)]('+direct+')\nBağlantı geçicidir; 48 saat içinde kaldırılır.\nTracker list: '+tracker_count+' tracker ('+tracker_display+')\nWorkflow: '+workflow
           body=json.dumps({'job_id':os.getenv('SUBTITLE_JOB_ID',''),'channel_id':channel,'message_id':message,'content':content}).encode()
           req=urllib.request.Request(url,data=body,headers={'Content-Type':'application/json','X-Subtitle-Callback-Secret':secret},method='POST')
           try:
