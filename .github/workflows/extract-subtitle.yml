@@ -143,13 +143,16 @@ jobs:
           message = os.environ.get('STATUS_MESSAGE_ID', '')
           secret = os.environ.get('SUBTITLE_CALLBACK_SECRET', '')
           callback_url = os.environ.get('SUBTITLE_CALLBACK_URL', '')
-          if channel.isdigit() and message.isdigit() and secret and callback_url:
-              payload = json.dumps({'job_id': os.environ.get('SUBTITLE_JOB_ID', ''), 'channel_id': channel, 'message_id': message, 'content': f'**UBAgen ayıklıyor**\\nVideo adı: {os.path.basename(video)}\\n%100 indi, altyazı akışı aranıyor...'}).encode()
+          def report_stage(stage):
+              if not (channel.isdigit() and message.isdigit() and secret and callback_url):
+                  return
+              payload = json.dumps({'job_id': os.environ.get('SUBTITLE_JOB_ID', ''), 'channel_id': channel, 'message_id': message, 'content': f'**UBAgen ayıklıyor**\\nVideo adı: {os.path.basename(video)}\\n{stage}'}).encode()
               request = urllib.request.Request(callback_url, data=payload, headers={'Content-Type':'application/json','X-Subtitle-Callback-Secret':secret}, method='POST')
               try:
                   with urllib.request.urlopen(request, timeout=8) as response: print('Extraction-stage callback HTTP', response.status)
               except Exception as exc:
                   print('Extraction-stage callback unavailable:', type(exc).__name__)
+          report_stage('%100 indi, altyazı akışı aranıyor...')
           probe = subprocess.run(['ffprobe','-v','quiet','-print_format','json','-show_streams','-select_streams','s',video],capture_output=True,text=True)
           try:
               streams = json.loads(probe.stdout or '{}').get('streams', [])
@@ -159,6 +162,7 @@ jobs:
           fmt = (os.environ.get('SUBTITLE_FORMAT', 'srt').strip().lower() or 'srt')
           output = f'extracted_sub_{lang}.{fmt}'
           candidates = ([selected] if selected is not None else []) + [i for i in range(len(streams)) if i != selected]
+          report_stage('Altyazı ayıklanıyor...')
           success = False
           codec = 'ass' if fmt == 'ass' else 'srt'
           for stream_index in candidates:
@@ -169,6 +173,7 @@ jobs:
               if os.path.exists(output): os.remove(output)
           if not success:
               sys.exit(f'No exportable {fmt.upper()} subtitle stream found for language {lang}; first-stream fallback also failed.')
+          report_stage('Çıktı doğrulanıyor...')
           if fmt == 'srt':
               with open(output, 'r', encoding='utf-8', errors='ignore') as f:
                   content = f.read()
