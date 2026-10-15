@@ -318,7 +318,6 @@ jobs:
           DOWNLOAD_OUTCOME: ${{ steps.download.outcome }}
           EXTRACT_OUTCOME: ${{ steps.extract.outcome }}
           DELIVERY_OUTCOME: ${{ steps.discord_delivery.outcome }}
-          SUBTITLE_ERROR_CODE: ${{ env.SUBTITLE_ERROR_CODE || 'not-reported' }}
         shell: bash
         run: |
           python3 - <<'PY'
