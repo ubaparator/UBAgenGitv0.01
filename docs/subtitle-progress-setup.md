@@ -1,12 +1,12 @@
 # Subtitle progress callback setup
 
-The subtitle workflow uses the existing Render-hosted UBAgen bot to edit the public slash-command status message. Configure the following secret on both sides before testing.
+The subtitle workflow uses the existing Render-hosted UBAgen bot to edit the public slash-command status message. A dedicated callback secret is recommended; if it is omitted, the code falls back to the existing Discord bot token (which must be the same on Render and GitHub Actions).
 
 ## Render service
 
 In Render Dashboard → `ubagen-github-bridge` → Environment, add:
 
-- `SUBTITLE_CALLBACK_SECRET`: a long random secret (at least 32 random bytes). Generate one locally with `python -c "import secrets; print(secrets.token_urlsafe(48))"`. Do not commit or post it in chat.
+- `SUBTITLE_CALLBACK_SECRET` (recommended): a long random secret (at least 32 random bytes). Generate one locally with `python -c "import secrets; print(secrets.token_urlsafe(48))"`. Do not commit or post it in chat. If set, use exactly the same value in GitHub Actions.
 
 Save and redeploy the service.
 
@@ -14,7 +14,7 @@ Save and redeploy the service.
 
 Open repository Settings → Secrets and variables → Actions and add:
 
-- `SUBTITLE_CALLBACK_SECRET`: exactly the same value as Render.
+- `SUBTITLE_CALLBACK_SECRET` (recommended): exactly the same value as Render. If omitted, both sides fall back to `DISCORD_BOT_TOKEN`; ensure the token value is identical on Render and GitHub Actions.
 - `SUBTITLE_CALLBACK_URL` (optional): `https://ubagen-github-bridge.onrender.com/api/subtitle-progress`. If omitted, the workflow uses this default.
 - Keep `DISCORD_BOT_TOKEN` configured if you want Actions to attempt direct Discord file attachments. The token must belong to a bot with access to the target channel and permission to attach files.
 
