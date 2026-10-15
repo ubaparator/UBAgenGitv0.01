@@ -146,7 +146,7 @@ jobs:
           def report_stage(stage):
               if not (channel.isdigit() and message.isdigit() and secret and callback_url):
                   return
-              payload = json.dumps({'job_id': os.environ.get('SUBTITLE_JOB_ID', ''), 'channel_id': channel, 'message_id': message, 'content': f'**UBAgen ayıklıyor**\\nVideo adı: {os.path.basename(video)}\\n{stage}'}).encode()
+              payload = json.dumps({'job_id': os.environ.get('SUBTITLE_JOB_ID', ''), 'channel_id': channel, 'message_id': message, 'content': f'**UBAgen ayıklıyor**\nVideo adı: {os.path.basename(video)}\n{stage}'}).encode()
               request = urllib.request.Request(callback_url, data=payload, headers={'Content-Type':'application/json','X-Subtitle-Callback-Secret':secret}, method='POST')
               try:
                   with urllib.request.urlopen(request, timeout=8) as response: print('Extraction-stage callback HTTP', response.status)
