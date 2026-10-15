@@ -110,7 +110,7 @@ jobs:
                   pct = max(0, min(100, int(float(percent.group(1)))))
                   dl = dl_re.search(line)
                   eta = eta_re.search(line)
-                  dl_text = dl.group(1) if dl else 'hesaplanıyor'
+                  dl_text = (dl.group(1) + '/s') if dl else 'hesaplanıyor'
                   eta_text = eta.group(1) if eta else 'hesaplanıyor'
                   bar = '█' * (pct // 10) + '░' * (10 - pct // 10)
                   status = f'**UBAgen ayıklıyor**\nVideo adı: video\nİndirme: %{pct}\nETA: {eta_text}\nDL: {dl_text}\n{bar}'
@@ -133,12 +133,23 @@ jobs:
         run: |
           set -euo pipefail
           python3 - <<'PY'
-          import glob, json, os, re, subprocess, sys
+          import glob, json, os, re, subprocess, sys, urllib.request
           lang = (os.environ.get('TARGET_LANG', 'tur').strip().lower() or 'tur')
           videos = sorted(glob.glob('download_temp/**/*.mkv', recursive=True) + glob.glob('download_temp/**/*.mp4', recursive=True))
           if not videos:
               sys.exit('No MKV/MP4 video was found in the downloaded torrent.')
           video = videos[0]
+          channel = os.environ.get('DISCORD_CHANNEL_ID', '')
+          message = os.environ.get('STATUS_MESSAGE_ID', '')
+          secret = os.environ.get('SUBTITLE_CALLBACK_SECRET', '')
+          callback_url = os.environ.get('SUBTITLE_CALLBACK_URL', '')
+          if channel.isdigit() and message.isdigit() and secret and callback_url:
+              payload = json.dumps({'job_id': os.environ.get('SUBTITLE_JOB_ID', ''), 'channel_id': channel, 'message_id': message, 'content': f'**UBAgen ayıklıyor**\\nVideo adı: {os.path.basename(video)}\\n%100 indi, altyazı akışı aranıyor...'}).encode()
+              request = urllib.request.Request(callback_url, data=payload, headers={'Content-Type':'application/json','X-Subtitle-Callback-Secret':secret}, method='POST')
+              try:
+                  with urllib.request.urlopen(request, timeout=8) as response: print('Extraction-stage callback HTTP', response.status)
+              except Exception as exc:
+                  print('Extraction-stage callback unavailable:', type(exc).__name__)
           probe = subprocess.run(['ffprobe','-v','quiet','-print_format','json','-show_streams','-select_streams','s',video],capture_output=True,text=True)
           try:
               streams = json.loads(probe.stdout or '{}').get('streams', [])
