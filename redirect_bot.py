@@ -124,6 +124,34 @@ async def dispatch_encode(video_url: str, subtitle_url: Optional[str], codec: st
     return job
 
 
+async def dispatch_subtitle_extraction(magnet_link: str, target_lang: str) -> dict:
+    global LAST_ERROR
+    if not GH_TOKEN:
+        LAST_ERROR = "GH_TOKEN eksik."
+        raise HTTPException(status_code=503, detail=LAST_ERROR)
+    magnet_link = magnet_link.strip()
+    target_lang = (target_lang or "tur").strip().lower() or "tur"
+    if not magnet_link.startswith("magnet:?") or len(magnet_link) > 4000 or "\\n" in magnet_link or "\\r" in magnet_link:
+        raise HTTPException(status_code=400, detail="Geçerli bir magnet bağlantısı girilmeli (magnet:? ile başlamalı).")
+    import re
+    if not re.fullmatch(r"[a-z]{3}", target_lang):
+        raise HTTPException(status_code=400, detail="Dil kodu 3 küçük harf olmalı; örnek: tur, eng, ger, fre, spa, jpn.")
+    payload = {"event_type": "extract_subtitle_request", "client_payload": {"magnet_link": magnet_link, "target_lang": target_lang, "requested_at": int(time.time())}}
+    headers = {"Authorization": f"Bearer {GH_TOKEN}", "Accept": "application/vnd.github+json", "X-GitHub-Api-Version": "2022-11-28", "User-Agent": "UBAgen-GitHub-Bridge"}
+    url = f"https://api.github.com/repos/{REPOSITORY}/dispatches"
+    timeout = aiohttp.ClientTimeout(total=20)
+    async with aiohttp.ClientSession(timeout=timeout) as session:
+        async with session.post(url, headers=headers, json=payload) as response:
+            body = await response.text()
+            if response.status != 204:
+                LAST_ERROR = f"GitHub subtitle dispatch HTTP {response.status}: {body[:350]}"
+                log.error(LAST_ERROR)
+                raise HTTPException(status_code=502, detail="Altyazı ayıklama işi GitHub Actions'a gönderilemedi. /log komutuna bak.")
+    job = {"requested_at": int(time.time()), "codec": "subtitle-extraction", "has_subtitle": True, "status": f"GitHub Actions'a gönderildi ({target_lang})"}
+    RECENT_JOBS.insert(0, job)
+    del RECENT_JOBS[MAX_JOBS:]
+    return job
+
 @bot.event
 async def on_disconnect():
     global LAST_ERROR
@@ -184,6 +212,26 @@ async def encodeal(
         await interaction.followup.send(str(exc.detail), ephemeral=True)
 
 
+@tree.command(name="altyazi_ayikla", description="Magnet bağlantısından altyazıyı GitHub Actions üzerinde ayıkla")
+@app_commands.describe(magnet_link="Torrent magnet bağlantısı (magnet:? ile başlamalı)", dil="Üç harfli altyazı dili kodu; varsayılan tur")
+async def altyazi_ayikla(interaction: discord.Interaction, magnet_link: str, dil: str = "tur"):
+    if not ACCEPTING_JOBS:
+        await interaction.response.send_message("Bot şu anda yeni iş kabul etmiyor.", ephemeral=True)
+        return
+    await interaction.response.defer(ephemeral=True, thinking=True)
+    try:
+        await dispatch_subtitle_extraction(magnet_link, dil)
+        await interaction.followup.send(
+            f"Altyazı ayıklama işi GitHub Actions'a gönderildi. Dil: **{dil.strip().lower() or 'tur'}**. "
+            "Render yalnızca isteği yönlendirdi; indirme ve FFmpeg işlemleri GitHub Actions runner'ında çalışacak. "
+            "İş tamamlanınca dosyayı GitHub Actions → Extract subtitle → Artifacts bölümünden indir: "
+            "https://github.com/ubaparator/UBAgenGitv0.01/actions",
+            ephemeral=True,
+        )
+    except HTTPException as exc:
+        await interaction.followup.send(str(exc.detail), ephemeral=True)
+
+
 @tree.command(name="stats", description="Bot ve servis durumunu göster")
 async def stats(interaction: discord.Interaction):
     uptime = int(time.time() - STARTED_AT)
@@ -193,7 +241,7 @@ async def stats(interaction: discord.Interaction):
         f"Çalışma: {uptime // 3600}s {(uptime % 3600) // 60}d\n"
         f"Son 24 saatteki işler burada tutulmaz; son {len(RECENT_JOBS)} istek bellekte."
     )
-    await interaction.response.send_message(text[:1000], ephemeral=True)
+    await interaction.response.send_message(text[:1000], ephemeral=False)
 
 
 @tree.command(name="log", description="Son hata/eksik ayar bilgisini göster")

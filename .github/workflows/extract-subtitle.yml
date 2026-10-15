@@ -1,0 +1,105 @@
+name: Extract subtitle
+
+on:
+  repository_dispatch:
+    types: [extract_subtitle_request]
+  workflow_dispatch:
+    inputs:
+      magnet_link:
+        description: Torrent magnet link
+        required: true
+        type: string
+      target_lang:
+        description: Three-letter subtitle language code (tur, eng, ger, fre, spa, jpn)
+        required: false
+        default: tur
+        type: string
+
+permissions:
+  contents: read
+
+concurrency:
+  group: subtitle-${{ github.run_id }}
+  cancel-in-progress: false
+
+jobs:
+  extract:
+    runs-on: ubuntu-latest
+    timeout-minutes: 240
+    env:
+      MAGNET_LINK: ${{ github.event.client_payload.magnet_link || inputs.magnet_link }}
+      TARGET_LANG: ${{ github.event.client_payload.target_lang || inputs.target_lang || 'tur' }}
+    steps:
+      - name: Install aria2 and FFmpeg
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y aria2 ffmpeg curl
+
+      - name: Validate request and download torrent
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          import os, re, sys
+          magnet = os.environ.get('MAGNET_LINK', '').strip()
+          lang = os.environ.get('TARGET_LANG', 'tur').strip().lower() or 'tur'
+          if not magnet.startswith('magnet:?') or len(magnet) > 4000 or '\n' in magnet or '\r' in magnet:
+              sys.exit('Invalid magnet link.')
+          if not re.fullmatch(r'[a-z]{3}', lang):
+              sys.exit('Language must be a three-letter code such as tur or eng.')
+          print('Request validated. Target language:', lang)
+          PY
+          mkdir -p download_temp
+          curl -fsSL --retry 3 https://raw.githubusercontent.com/ngosang/trackerslist/master/trackers_best.txt -o trackers.txt
+          TRACKERS="$(grep -v '^$' trackers.txt | paste -sd, -)"
+          if [ -z "$TRACKERS" ]; then echo 'Could not load tracker list'; exit 1; fi
+          timeout 4h aria2c --dir=download_temp --seed-time=0 --max-connection-per-server=16 --split=16 --enable-dht=true --bt-max-peers=200 --bt-tracker="$TRACKERS" --summary-interval=15 "$MAGNET_LINK"
+
+      - name: Extract and clean subtitle
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          import glob, json, os, re, subprocess, sys
+          lang = (os.environ.get('TARGET_LANG', 'tur').strip().lower() or 'tur')
+          videos = sorted(glob.glob('download_temp/**/*.mkv', recursive=True) + glob.glob('download_temp/**/*.mp4', recursive=True))
+          if not videos:
+              sys.exit('No MKV/MP4 video was found in the downloaded torrent.')
+          video = videos[0]
+          probe = subprocess.run(['ffprobe','-v','quiet','-print_format','json','-show_streams','-select_streams','s',video],capture_output=True,text=True)
+          try:
+              streams = json.loads(probe.stdout or '{}').get('streams', [])
+          except json.JSONDecodeError:
+              streams = []
+          selected = next((i for i,s in enumerate(streams) if s.get('tags',{}).get('language','').lower() == lang), None)
+          output = f'extracted_sub_{lang}.srt'
+          candidates = ([selected] if selected is not None else []) + [i for i in range(len(streams)) if i != selected]
+          success = False
+          for stream_index in candidates:
+              result = subprocess.run(['ffmpeg','-nostdin','-y','-v','error','-i',video,'-map',f'0:s:{stream_index}','-c:s','srt',output],capture_output=True,text=True)
+              if result.returncode == 0 and os.path.exists(output) and os.path.getsize(output) > 0:
+                  success = True
+                  break
+              if os.path.exists(output): os.remove(output)
+          if not success:
+              sys.exit(f'No exportable subtitle stream found for language {lang}; first-stream fallback also failed.')
+          with open(output, 'r', encoding='utf-8', errors='ignore') as f:
+              content = f.read()
+          content = re.sub(r'<[^>]*>', '', content)
+          content = re.sub(r'\{[^}]*\}', '', content)
+          with open(output, 'w', encoding='utf-8', newline='\n') as f:
+              f.write(content)
+          print(f'Subtitle extracted: {output} ({os.path.getsize(output)} bytes)')
+          PY
+
+      - name: Upload subtitle artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: extracted-subtitle-${{ github.run_number }}
+          path: extracted_sub_*.srt
+          if-no-files-found: error
+          retention-days: 1
+
+      - name: Report artifact location
+        if: always()
+        run: echo 'Open this workflow run and download the artifact from the Artifacts section.'
