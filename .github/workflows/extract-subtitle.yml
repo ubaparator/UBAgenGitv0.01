@@ -126,6 +126,10 @@ jobs:
               line = line.strip()
               if not line: return
               print('ARIA2: ' + line, flush=True)
+              global video_name
+              name_match = re.search(r'(?:download_temp/)?([^/\\\\]+\\.(?:mkv|mp4))', line, re.IGNORECASE)
+              if name_match:
+                  video_name = name_match.group(1)[:180]
               now = time.monotonic()
               if now - last_report < 4: return
               match = percent_re.search(line)
@@ -277,11 +281,32 @@ jobs:
           if [[ "$HTTP_CODE" =~ ^2[0-9][0-9]$ ]]; then
             echo "Discord accepted the subtitle attachment."
             echo "sent=true" >> "$GITHUB_OUTPUT"
+            echo "http_code=$HTTP_CODE" >> "$GITHUB_OUTPUT"
+            echo "discord_error_code=0" >> "$GITHUB_OUTPUT"
             exit 0
           fi
           echo "Discord attachment failed (HTTP ${HTTP_CODE:-unknown}); direct-file fallback will be attempted."
           cat discord_response.json 2>/dev/null | head -c 700 || true
           echo "sent=false" >> "$GITHUB_OUTPUT"
+          echo "http_code=${HTTP_CODE:-unknown}" >> "$GITHUB_OUTPUT"
+          API_ERROR_CODE="$(python3 - <<'PY'
+          import json
+          try:
+              print(json.load(open('discord_response.json', encoding='utf-8')).get('code', 'unknown'))
+          except Exception:
+              print('unknown')
+          PY
+          )"
+          API_ERROR_MESSAGE="$(python3 - <<'PY'
+          import json
+          try:
+              print(str(json.load(open('discord_response.json', encoding='utf-8')).get('message', 'unknown')).replace('\n',' ')[:100])
+          except Exception:
+              print('unknown')
+          PY
+          )"
+          echo "discord_error_code=$API_ERROR_CODE" >> "$GITHUB_OUTPUT"
+          echo "discord_error_message=$API_ERROR_MESSAGE" >> "$GITHUB_OUTPUT"
 
       - name: Publish direct subtitle download as a Release asset
         id: direct_download
@@ -318,6 +343,9 @@ jobs:
           DOWNLOAD_OUTCOME: ${{ steps.download.outcome }}
           EXTRACT_OUTCOME: ${{ steps.extract.outcome }}
           DELIVERY_OUTCOME: ${{ steps.discord_delivery.outcome }}
+          DISCORD_HTTP_CODE: ${{ steps.discord_delivery.outputs.http_code }}
+          DISCORD_API_ERROR_CODE: ${{ steps.discord_delivery.outputs.discord_error_code }}
+          DISCORD_API_ERROR_MESSAGE: ${{ steps.discord_delivery.outputs.discord_error_message }}
         shell: bash
         run: |
           python3 - <<'PY'
@@ -333,6 +361,9 @@ jobs:
           tracker_count=os.getenv('TRACKER_COUNT','0')
           tracker_display=os.getenv('TRACKER_DISPLAY','bilinmiyor')
           error_code=os.getenv('SUBTITLE_ERROR_CODE','not-reported')
+          discord_http=os.getenv('DISCORD_HTTP_CODE','not-attempted')
+          discord_api_code=os.getenv('DISCORD_API_ERROR_CODE','none')
+          discord_api_message=os.getenv('DISCORD_API_ERROR_MESSAGE','')
           if os.getenv('JOB_STATUS') != 'success':
               failed_stage = 'indirme' if os.getenv('DOWNLOAD_OUTCOME') == 'failure' else ('altyazı ayıklama' if os.getenv('EXTRACT_OUTCOME') == 'failure' else 'dosya teslimi/iş akışı')
               content=('❌ **UBAgen ayıklama başarısız**\nAşama: '+failed_stage+
