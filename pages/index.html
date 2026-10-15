@@ -11,7 +11,7 @@
 header{padding:12px 2px 20px}h1{font-size:clamp(1.7rem,5vw,2.4rem);letter-spacing:-.04em;margin:0}h2{font-size:1.08rem;margin:0 0 12px}.sub{color:var(--muted);margin:6px 0 0}.pill{display:inline-flex;align-items:center;gap:7px;border:1px solid var(--line);border-radius:99px;padding:5px 10px;font-size:.82rem;color:var(--muted);margin-bottom:12px}
 section{background:rgba(18,25,35,.96);border:1px solid var(--line);border-radius:18px;padding:17px;margin:13px 0;box-shadow:0 8px 28px #0002}
 label{display:block;color:var(--muted);font-size:.9rem;margin:10px 0 5px}input,select,button{width:100%;border-radius:11px;border:1px solid var(--line);padding:12px;background:#0a1017;color:var(--text);font:inherit}input:focus,select:focus{outline:2px solid #61e6a566;border-color:var(--accent)}
-button{background:var(--accent);color:#06130c;font-weight:800;border:0;margin-top:12px;cursor:pointer}button.secondary{background:#202c3b;color:var(--text);border:1px solid #344458}button:disabled{opacity:.55;cursor:wait}
+button{background:var(--accent);color:#06130c;font-weight:800;border:0;margin-top:12px;cursor:pointer}button.secondary{background:#202c3b;color:var(--text);border:1px solid #344458}button:disabled{opacity:.55;cursor:wait}.invite-button{display:inline-flex;align-items:center;justify-content:center;width:100%;padding:13px 16px;margin-top:14px;border-radius:11px;background:#5865f2;color:#fff;text-decoration:none;font-weight:800;text-align:center}.invite-button[aria-disabled="true"]{opacity:.55;cursor:not-allowed;pointer-events:none}
 .grid{display:grid;grid-template-columns:1fr 1fr;gap:10px}.status{border:1px solid var(--line);border-radius:12px;padding:12px;margin-top:10px;overflow-wrap:anywhere;min-height:44px}.muted{color:var(--muted)}.error{color:var(--bad);white-space:pre-wrap}.ok{color:var(--accent)}.warn{color:var(--warn)}pre{white-space:pre-wrap;overflow-wrap:anywhere;margin:0;font: .9rem/1.55 ui-monospace,SFMono-Regular,Consolas,monospace}a{color:var(--accent);overflow-wrap:anywhere}details{border-top:1px solid var(--line);padding:11px 0}details:last-child{padding-bottom:0}summary{cursor:pointer;font-weight:650}p{margin-top:8px}.small{font-size:.87rem}.hidden{display:none!important}.metric{display:grid;grid-template-columns:repeat(3,1fr);gap:8px}.metric div{background:#0b1219;border:1px solid var(--line);border-radius:12px;padding:12px}.metric strong{display:block;font-size:1.1rem}.metric span{font-size:.82rem;color:var(--muted)}
 @media(max-width:560px){main{padding:16px 10px 40px}.grid,.metric{grid-template-columns:1fr}section{padding:14px}}
 </style>
@@ -22,6 +22,8 @@ button{background:var(--accent);color:#06130c;font-weight:800;border:0;margin-to
   <div class="pill"><span>●</span> UBAgen / GitHub Actions / Discord</div>
   <h1>Yönetim Paneli</h1>
   <p class="sub">Servis bağlantısı, Discord durumu, encode işleri ve hata tanılaması.</p>
+  <a id="inviteBot" class="invite-button" href="#" target="_blank" rel="noopener noreferrer" aria-disabled="true" title="Bot bağlantısı yükleniyor">Botu Discord sunucuna ekle ↗</a>
+  <p id="inviteHelp" class="muted small">Davet bağlantısı servis durumundan yükleniyor…</p>
 </header>
 
 <section id="connectPanel">
@@ -115,6 +117,22 @@ button{background:var(--accent);color:#06130c;font-weight:800;border:0;margin-to
     const d=Math.floor(seconds/86400), h=Math.floor((seconds%86400)/3600), m=Math.floor((seconds%3600)/60);
     return (d ? d+"g " : "")+h+"s "+m+"d";
   }
+  function updateInviteButton(health) {
+    const button = $("inviteBot");
+    const help = $("inviteHelp");
+    const clientId = health && health.discord_user_id;
+    if (!clientId) {
+      button.removeAttribute("href");
+      button.setAttribute("aria-disabled", "true");
+      button.title = "Bot kimliği henüz alınamadı; servis durumunu yenile.";
+      help.textContent = "Davet bağlantısı için önce botun Discord kimliğinin servisten alınması gerekiyor.";
+      return;
+    }
+    button.href = "https://discord.com/oauth2/authorize?client_id=" + encodeURIComponent(clientId) + "&scope=bot%20applications.commands&permissions=0";
+    button.setAttribute("aria-disabled", "false");
+    button.title = "UBAgen botunu bir Discord sunucusuna davet et.";
+    help.textContent = "Davet ekranında botu eklemek istediğin sunucuyu seç. Bunun için o sunucuda sunucuyu yönetme yetkisi gerekir.";
+  }
   function renderJobs(data) {
     const jobs = data.jobs || [];
     $("jobs").textContent = jobs.length ? jobs.map((j,i) => (i+1)+". "+j.status+" • "+j.codec+" • "+new Date(j.requested_at*1000).toLocaleString("tr-TR")).join("\n") : "Bu servis oturumunda henüz encode isteği yok.";
@@ -122,6 +140,7 @@ button{background:var(--accent);color:#06130c;font-weight:800;border:0;margin-to
   async function refresh() {
     try {
       const health = await raw("/health");
+      updateInviteButton(health);
       $("serviceState").textContent = health.ok ? "Çalışıyor" : "Hata";
       $("serviceState").className = health.ok ? "ok" : "error";
       $("discordState").textContent = health.discord_ready ? "Bağlı" : "Bağlı değil";
@@ -146,6 +165,7 @@ button{background:var(--accent);color:#06130c;font-weight:800;border:0;margin-to
     setMessage("Servise bağlanılıyor…");
     try {
       const health = await raw("/health");
+      updateInviteButton(health);
       const config = await request("/api/config-check");
       $("serviceState").textContent = "Çalışıyor";
       $("discordState").textContent = health.discord_ready ? "Bağlı" : "Bağlı değil";
@@ -185,6 +205,7 @@ button{background:var(--accent);color:#06130c;font-weight:800;border:0;margin-to
   });
   $("refresh").addEventListener("click", refresh);
   $("diagnose").addEventListener("click", diagnose);
+  refresh();
   $("encode").addEventListener("click", async () => {
     $("encode").disabled = true;
     $("encodeResult").textContent = "İş gönderiliyor…";
