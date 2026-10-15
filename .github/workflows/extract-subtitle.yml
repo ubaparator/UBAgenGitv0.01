@@ -43,7 +43,7 @@ jobs:
           import os, re, sys
           magnet = os.environ.get('MAGNET_LINK', '').strip()
           lang = os.environ.get('TARGET_LANG', 'tur').strip().lower() or 'tur'
-          if not magnet.startswith('magnet:?') or len(magnet) > 4000 or '\\n' in magnet or '\\r' in magnet:
+          if not magnet.startswith('magnet:?') or len(magnet) > 4000 or '\n' in magnet or '\r' in magnet:
               sys.exit('Invalid magnet link.')
           if not re.fullmatch(r'[a-z]{3}', lang):
               sys.exit('Language must be a three-letter code such as tur or eng.')
@@ -86,8 +86,8 @@ jobs:
           with open(output, 'r', encoding='utf-8', errors='ignore') as f:
               content = f.read()
           content = re.sub(r'<[^>]*>', '', content)
-          content = re.sub(r'\\{[^}]*\\}', '', content)
-          with open(output, 'w', encoding='utf-8', newline='\\n') as f:
+          content = re.sub(r'\{[^}]*\}', '', content)
+          with open(output, 'w', encoding='utf-8', newline='\n') as f:
               f.write(content)
           print(f'Subtitle extracted: {output} ({os.path.getsize(output)} bytes)')
           PY
