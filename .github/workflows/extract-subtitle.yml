@@ -108,7 +108,7 @@ jobs:
               tracker_hosts.append(parsed.netloc or item[:60])
           tracker_line = f'Tracker list: {len(tracker_urls)} tracker yüklendi (' + (', '.join(tracker_hosts) if tracker_hosts else 'yok') + ')'
           workflow_url = os.environ.get('WORKFLOW_URL','')
-          video_name = 'torrent içinden bekleniyor'
+          video_name = urllib.parse.parse_qs(urllib.parse.urlparse(os.environ['MAGNET_LINK']).query).get('dn', ['torrent içinden bekleniyor'])[0][:180]
           report('**UBAgen ayıklıyor**\nVideo adı: ' + video_name + '\n' + tracker_line + '\nWorkflow: ' + workflow_url + '\nAşama: Torrent bağlantısı kuruluyor...')
           cmd = ['timeout','4h','stdbuf','-o0','-e0','aria2c','--console-log-level=notice','--show-console-readout=true','--dir=download_temp','--seed-time=0','--max-connection-per-server=16','--split=16','--enable-dht=true','--bt-max-peers=200','--bt-tracker='+os.environ['TRACKERS'],'--summary-interval=5',os.environ['MAGNET_LINK']]
           proc = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, bufsize=0)
