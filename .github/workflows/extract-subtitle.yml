@@ -118,7 +118,7 @@ jobs:
           percent_re = re.compile(r'\((\d+(?:\.\d+)?)%\)|(?<![\w.])(\d+(?:\.\d+)?)%')
           dl_re = re.compile(r'\bDL:([^\s\]]+)')
           eta_re = re.compile(r'\bETA:([^\s\]]+)')
-          seed_re = re.compile(r'\bSEED:(\d+)')
+          seed_re = re.compile(r'\b(?:SEED|SD):(\d+)')
           peer_re = re.compile(r'\b(?:CN|PEERS?):(\d+)')
           size_re = re.compile(r'(\d+(?:\.\d+)?\s*[KMGTP]?i?B)/(\d+(?:\.\d+)?\s*[KMGTP]?i?B)')
           def consume(line):
