@@ -14,6 +14,18 @@ on:
         required: false
         default: tur
         type: string
+      subtitle_format:
+        description: Output subtitle format
+        required: false
+        default: srt
+        type: choice
+        options:
+          - srt
+          - ass
+      discord_channel_id:
+        description: Discord channel ID for direct file delivery (manual runs only)
+        required: false
+        type: string
 
 permissions:
   contents: read
@@ -29,6 +41,8 @@ jobs:
     env:
       MAGNET_LINK: ${{ github.event.client_payload.magnet_link || inputs.magnet_link }}
       TARGET_LANG: ${{ github.event.client_payload.target_lang || inputs.target_lang || 'tur' }}
+      SUBTITLE_FORMAT: ${{ github.event.client_payload.subtitle_format || inputs.subtitle_format || 'srt' }}
+      DISCORD_CHANNEL_ID: ${{ github.event.client_payload.discord_channel_id || inputs.discord_channel_id || '' }}
     steps:
       - name: Install aria2 and FFmpeg
         run: |
@@ -43,11 +57,14 @@ jobs:
           import os, re, sys
           magnet = os.environ.get('MAGNET_LINK', '').strip()
           lang = os.environ.get('TARGET_LANG', 'tur').strip().lower() or 'tur'
+          fmt = os.environ.get('SUBTITLE_FORMAT', 'srt').strip().lower() or 'srt'
+          if fmt not in {'srt', 'ass'}:
+              sys.exit('Subtitle format must be srt or ass.')
           if not magnet.startswith('magnet:?') or len(magnet) > 4000 or '\n' in magnet or '\r' in magnet:
               sys.exit('Invalid magnet link.')
           if not re.fullmatch(r'[a-z]{3}', lang):
               sys.exit('Language must be a three-letter code such as tur or eng.')
-          print('Request validated. Target language:', lang)
+          print('Request validated. Target language:', lang, '| format:', fmt)
           PY
           mkdir -p download_temp
           curl -fsSL --retry 3 https://raw.githubusercontent.com/ngosang/trackerslist/master/trackers_best.txt -o trackers.txt
@@ -72,23 +89,26 @@ jobs:
           except json.JSONDecodeError:
               streams = []
           selected = next((i for i,s in enumerate(streams) if s.get('tags',{}).get('language','').lower() == lang), None)
-          output = f'extracted_sub_{lang}.srt'
+          fmt = (os.environ.get('SUBTITLE_FORMAT', 'srt').strip().lower() or 'srt')
+          output = f'extracted_sub_{lang}.{fmt}'
           candidates = ([selected] if selected is not None else []) + [i for i in range(len(streams)) if i != selected]
           success = False
+          codec = 'ass' if fmt == 'ass' else 'srt'
           for stream_index in candidates:
-              result = subprocess.run(['ffmpeg','-nostdin','-y','-v','error','-i',video,'-map',f'0:s:{stream_index}','-c:s','srt',output],capture_output=True,text=True)
+              result = subprocess.run(['ffmpeg','-nostdin','-y','-v','error','-i',video,'-map',f'0:s:{stream_index}','-c:s',codec,output],capture_output=True,text=True)
               if result.returncode == 0 and os.path.exists(output) and os.path.getsize(output) > 0:
                   success = True
                   break
               if os.path.exists(output): os.remove(output)
           if not success:
-              sys.exit(f'No exportable subtitle stream found for language {lang}; first-stream fallback also failed.')
-          with open(output, 'r', encoding='utf-8', errors='ignore') as f:
-              content = f.read()
-          content = re.sub(r'<[^>]*>', '', content)
-          content = re.sub(r'\{[^}]*\}', '', content)
-          with open(output, 'w', encoding='utf-8', newline='\n') as f:
-              f.write(content)
+              sys.exit(f'No exportable {fmt.upper()} subtitle stream found for language {lang}; first-stream fallback also failed.')
+          if fmt == 'srt':
+              with open(output, 'r', encoding='utf-8', errors='ignore') as f:
+                  content = f.read()
+              content = re.sub(r'<[^>]*>', '', content)
+              content = re.sub(r'\{[^}]*\}', '', content)
+              with open(output, 'w', encoding='utf-8', newline='\n') as f:
+                  f.write(content)
           print(f'Subtitle extracted: {output} ({os.path.getsize(output)} bytes)')
           PY
 
@@ -96,10 +116,37 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: extracted-subtitle-${{ github.run_number }}
-          path: extracted_sub_*.srt
+          path: extracted_sub_*.*
           if-no-files-found: error
           retention-days: 1
 
+      - name: Send subtitle directly to Discord
+        if: success() && env.DISCORD_CHANNEL_ID != ''
+        env:
+          DISCORD_BOT_TOKEN: ${{ secrets.DISCORD_BOT_TOKEN }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [ -z "${DISCORD_BOT_TOKEN:-}" ]; then
+            echo "::error::Missing repository secret DISCORD_BOT_TOKEN. Add the bot token in Settings > Secrets and variables > Actions."
+            exit 1
+          fi
+          OUTPUT="$(find . -maxdepth 1 -type f -name 'extracted_sub_*.*' | head -n 1)"
+          if [ -z "$OUTPUT" ]; then echo "::error::Subtitle output file not found."; exit 1; fi
+          python3 - "$OUTPUT" <<'PY'
+          import json, os, sys
+          output = sys.argv[1]
+          with open('discord_payload.json', 'w', encoding='utf-8') as f:
+              json.dump({'content': f'✅ Altyazı hazır: **{os.path.basename(output)}**'}, f, ensure_ascii=False)
+          PY
+          HTTP_CODE="$(curl -sS -o discord_response.json -w '%{http_code}' -H "Authorization: Bot ${DISCORD_BOT_TOKEN}" -F "payload_json=$(cat discord_payload.json)" -F "files[0]=@$OUTPUT" "https://discord.com/api/v10/channels/${DISCORD_CHANNEL_ID}/messages")"
+          if [ "$HTTP_CODE" -lt 200 ] || [ "$HTTP_CODE" -ge 300 ]; then
+            echo "::error::Discord file delivery failed (HTTP $HTTP_CODE). The file may exceed the server upload limit or the bot may lack channel permissions."
+            cat discord_response.json
+            exit 1
+          fi
+          echo "Subtitle file delivered directly to Discord (HTTP $HTTP_CODE)."
+
       - name: Report artifact location
         if: always()
-        run: echo 'Open this workflow run and download the artifact from the Artifacts section.'
+        run: echo 'Open this workflow run and download the artifact from the Artifacts section if needed.'
