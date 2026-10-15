@@ -93,13 +93,13 @@ jobs:
                   print('Progress callback unavailable:', type(exc).__name__)
           trackers = os.environ.get('TRACKERS', '')
           cmd = ['timeout','4h','stdbuf','-oL','-eL','aria2c','--dir=download_temp','--seed-time=0','--max-connection-per-server=16','--split=16','--enable-dht=true','--bt-max-peers=200','--bt-tracker='+trackers,'--summary-interval=5',os.environ['MAGNET_LINK']]
-          report('**UBAgen ayıklıyor**\\nVideo adı: video\\nİndirme başlıyor...')
+          report('**UBAgen ayıklıyor**\nVideo adı: video\nİndirme başlıyor...')
           proc = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True, bufsize=1)
           last_report = 0
           last_status = ''
-          percent_re = re.compile(r'([0-9]+(?:\\.[0-9]+)?)%')
-          dl_re = re.compile(r'DL:([^\\s\\]]+)')
-          eta_re = re.compile(r'ETA:([^\\s\\]]+)')
+          percent_re = re.compile(r'([0-9]+(?:\.[0-9]+)?)%')
+          dl_re = re.compile(r'DL:([^\s\]]+)')
+          eta_re = re.compile(r'ETA:([^\s\]]+)')
           try:
               for line in proc.stdout:
                   print(line, end='')
@@ -113,7 +113,7 @@ jobs:
                   dl_text = dl.group(1) if dl else 'hesaplanıyor'
                   eta_text = eta.group(1) if eta else 'hesaplanıyor'
                   bar = '█' * (pct // 10) + '░' * (10 - pct // 10)
-                  status = f'**UBAgen ayıklıyor**\\nVideo adı: video\\nİndirme: %{pct}\\nETA: {eta_text}\\nDL: {dl_text}\\n{bar}'
+                  status = f'**UBAgen ayıklıyor**\nVideo adı: video\nİndirme: %{pct}\nETA: {eta_text}\nDL: {dl_text}\n{bar}'
                   if status != last_status:
                       report(status)
                       last_status = status
@@ -123,9 +123,9 @@ jobs:
               proc.kill()
               raise
           if code:
-              report('❌ **UBAgen ayıklama başarısız**\\nTorrent indirmesi hata koduyla tamamlandı. Workflow günlüklerini kontrol edin.')
+              report('❌ **UBAgen ayıklama başarısız**\nTorrent indirmesi hata koduyla tamamlandı. Workflow günlüklerini kontrol edin.')
               sys.exit(code)
-          report('**UBAgen ayıklıyor**\\nVideo adı: video\\n%100 indi, ayıklanıyor...')
+          report('**UBAgen ayıklıyor**\nVideo adı: video\n%100 indi, ayıklanıyor...')
           PY
 
       - name: Extract and clean subtitle
@@ -259,15 +259,15 @@ jobs:
               print('Final callback skipped: callback settings or message IDs are unavailable.')
               raise SystemExit(0)
           if os.getenv('JOB_STATUS') != 'success':
-              content='❌ **UBAgen ayıklama başarısız**\\nİşlem tamamlanamadı. GitHub Actions günlüklerini kontrol edin.'
+              content='❌ **UBAgen ayıklama başarısız**\nİşlem tamamlanamadı. GitHub Actions günlüklerini kontrol edin.'
           elif os.getenv('ATTACHMENT_SENT') == 'true':
-              content='✅ **UBAgen ayıklama tamamlandı**\\nAltyazı dosyası bu kanala eklendi.'
+              content='✅ **UBAgen ayıklama tamamlandı**\nAltyazı dosyası bu kanala eklendi.'
           else:
               direct=os.getenv('DIRECT_URL','')
               if not direct.startswith('https://github.com/'):
-                  content='❌ **UBAgen ayıklama tamamlandı ancak dosya teslim edilemedi.**\\nDoğrudan indirme bağlantısı oluşturulamadı.'
+                  content='❌ **UBAgen ayıklama tamamlandı ancak dosya teslim edilemedi.**\nDoğrudan indirme bağlantısı oluşturulamadı.'
               else:
-                  content='✅ **UBAgen ayıklama tamamlandı**\\n[Altyazıyı doğrudan indir (ZIP değil)]('+direct+')\\nBağlantı geçicidir; 48 saat içinde kaldırılır.'
+                  content='✅ **UBAgen ayıklama tamamlandı**\n[Altyazıyı doğrudan indir (ZIP değil)]('+direct+')\nBağlantı geçicidir; 48 saat içinde kaldırılır.'
           body=json.dumps({'job_id':os.getenv('SUBTITLE_JOB_ID',''),'channel_id':channel,'message_id':message,'content':content}).encode()
           req=urllib.request.Request(url,data=body,headers={'Content-Type':'application/json','X-Subtitle-Callback-Secret':secret},method='POST')
           try:
