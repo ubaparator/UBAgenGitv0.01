@@ -154,7 +154,7 @@ async def dispatch_encode(video_url: str, subtitle_url: Optional[str], codec: st
     return job
 
 
-async def dispatch_subtitle_extraction(magnet_link: str, target_lang: str) -> dict:
+async def dispatch_subtitle_extraction(magnet_link: str, target_lang: str, subtitle_format: str, discord_channel_id: int) -> dict:
     global LAST_ERROR
     if not GH_TOKEN:
         LAST_ERROR = "GH_TOKEN eksik."
@@ -166,7 +166,9 @@ async def dispatch_subtitle_extraction(magnet_link: str, target_lang: str) -> di
     import re
     if not re.fullmatch(r"[a-z]{3}", target_lang):
         raise HTTPException(status_code=400, detail="Dil kodu 3 küçük harf olmalı; örnek: tur, eng, ger, fre, spa, jpn.")
-    payload = {"event_type": "extract_subtitle_request", "client_payload": {"magnet_link": magnet_link, "target_lang": target_lang, "requested_at": int(time.time())}}
+    if subtitle_format not in {"srt", "ass"}:
+        raise HTTPException(status_code=400, detail="Altyazı türü SRT veya ASS olmalı.")
+    payload = {"event_type": "extract_subtitle_request", "client_payload": {"magnet_link": magnet_link, "target_lang": target_lang, "subtitle_format": subtitle_format, "discord_channel_id": str(discord_channel_id), "requested_at": int(time.time())}}
     headers = {"Authorization": f"Bearer {GH_TOKEN}", "Accept": "application/vnd.github+json", "X-GitHub-Api-Version": "2022-11-28", "User-Agent": "UBAgen-GitHub-Bridge"}
     url = f"https://api.github.com/repos/{REPOSITORY}/dispatches"
     timeout = aiohttp.ClientTimeout(total=20)
@@ -176,7 +178,7 @@ async def dispatch_subtitle_extraction(magnet_link: str, target_lang: str) -> di
             if response.status != 204:
                 message = github_dispatch_error("subtitle dispatch", response.status, body)
                 raise HTTPException(status_code=502, detail=message)
-    job = {"requested_at": int(time.time()), "codec": "subtitle-extraction", "has_subtitle": True, "status": f"GitHub Actions'a gönderildi ({target_lang})"}
+    job = {"requested_at": int(time.time()), "codec": "subtitle-extraction", "has_subtitle": True, "status": f"GitHub Actions'a gönderildi ({target_lang}, {subtitle_format.upper()})"}
     RECENT_JOBS.insert(0, job)
     del RECENT_JOBS[MAX_JOBS:]
     return job
@@ -241,25 +243,26 @@ async def encodeal(
         await interaction.followup.send(str(exc.detail), ephemeral=False)
 
 
-@tree.command(name="altyazi_ayikla", description="Magnet bağlantısından altyazıyı GitHub Actions üzerinde ayıkla")
-@app_commands.describe(magnet_link="Torrent magnet bağlantısı (magnet:? ile başlamalı)", dil="Üç harfli altyazı dili kodu; varsayılan tur")
-async def altyazi_ayikla(interaction: discord.Interaction, magnet_link: str, dil: str = "tur"):
+@tree.command(name="altyazi_ayikla", description="Magnet bağlantısından SRT veya ASS altyazıyı ayıkla ve buraya gönder")
+@app_commands.describe(magnet_link="Torrent magnet bağlantısı (magnet:? ile başlamalı)", format="İndirilecek altyazı dosyası türü", dil="Üç harfli altyazı dili kodu; varsayılan tur")
+@app_commands.choices(format=[
+    app_commands.Choice(name="SRT", value="srt"),
+    app_commands.Choice(name="ASS", value="ass"),
+])
+async def altyazi_ayikla(interaction: discord.Interaction, magnet_link: str, format: app_commands.Choice[str], dil: str = "tur"):
     if not ACCEPTING_JOBS:
         await interaction.response.send_message("Bot şu anda yeni iş kabul etmiyor.", ephemeral=False)
         return
     await interaction.response.defer(ephemeral=False, thinking=True)
     try:
-        await dispatch_subtitle_extraction(magnet_link, dil)
+        await dispatch_subtitle_extraction(magnet_link, dil, format.value, interaction.channel_id)
         await interaction.followup.send(
-            f"Altyazı ayıklama işi GitHub Actions'a gönderildi. Dil: **{dil.strip().lower() or 'tur'}**. "
-            "Render yalnızca isteği yönlendirdi; indirme ve FFmpeg işlemleri GitHub Actions runner'ında çalışacak. "
-            "İş tamamlanınca dosyayı GitHub Actions → Extract subtitle → Artifacts bölümünden indir: "
-            "https://github.com/ubaparator/UBAgenGitv0.01/actions",
+            f"Altyazı ayıklama başladı. Dil: **{dil.strip().lower() or 'tur'}** · Tür: **{format.name}**. "
+            "İş bitince dosya bu kanala doğrudan gönderilecek.",
             ephemeral=False,
         )
     except HTTPException as exc:
         await interaction.followup.send(str(exc.detail), ephemeral=False)
-
 
 @tree.command(name="stats", description="Bot ve servis durumunu göster")
 async def stats(interaction: discord.Interaction):
