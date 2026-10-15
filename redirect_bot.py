@@ -2,6 +2,8 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import hmac
+import uuid
 from collections import deque
 import os
 import time
@@ -47,6 +49,7 @@ REPOSITORY = os.getenv("GITHUB_REPOSITORY", "ubaparator/UBAgenGitv0.01")
 GH_TOKEN = os.getenv("GH_TOKEN", "").strip()
 BOT_TOKEN = normalize_discord_token(os.getenv("DISCORD_BOT_TOKEN"))
 DASHBOARD_API_KEY = os.getenv("DASHBOARD_API_KEY", "")
+SUBTITLE_CALLBACK_SECRET = os.getenv("SUBTITLE_CALLBACK_SECRET", "")
 STARTED_AT = time.time()
 LAST_ERROR = "Henüz hata kaydı yok."
 ACCEPTING_JOBS = True
@@ -154,7 +157,7 @@ async def dispatch_encode(video_url: str, subtitle_url: Optional[str], codec: st
     return job
 
 
-async def dispatch_subtitle_extraction(magnet_link: str, target_lang: str, subtitle_format: str, discord_channel_id: int) -> dict:
+async def dispatch_subtitle_extraction(magnet_link: str, target_lang: str, subtitle_format: str, discord_channel_id: int, message_id: int, job_id: str) -> dict:
     global LAST_ERROR
     if not GH_TOKEN:
         LAST_ERROR = "GH_TOKEN eksik."
@@ -168,7 +171,7 @@ async def dispatch_subtitle_extraction(magnet_link: str, target_lang: str, subti
         raise HTTPException(status_code=400, detail="Dil kodu 3 küçük harf olmalı; örnek: tur, eng, ger, fre, spa, jpn.")
     if subtitle_format not in {"srt", "ass"}:
         raise HTTPException(status_code=400, detail="Altyazı türü SRT veya ASS olmalı.")
-    payload = {"event_type": "extract_subtitle_request", "client_payload": {"magnet_link": magnet_link, "target_lang": target_lang, "subtitle_format": subtitle_format, "discord_channel_id": str(discord_channel_id), "requested_at": int(time.time())}}
+    payload = {"event_type": "extract_subtitle_request", "client_payload": {"magnet_link": magnet_link, "target_lang": target_lang, "subtitle_format": subtitle_format, "discord_channel_id": str(discord_channel_id), "status_message_id": str(message_id), "job_id": job_id, "requested_at": int(time.time())}}
     headers = {"Authorization": f"Bearer {GH_TOKEN}", "Accept": "application/vnd.github+json", "X-GitHub-Api-Version": "2022-11-28", "User-Agent": "UBAgen-GitHub-Bridge"}
     url = f"https://api.github.com/repos/{REPOSITORY}/dispatches"
     timeout = aiohttp.ClientTimeout(total=20)
@@ -254,15 +257,22 @@ async def altyazi_ayikla(interaction: discord.Interaction, magnet_link: str, for
         await interaction.response.send_message("Bot şu anda yeni iş kabul etmiyor.", ephemeral=False)
         return
     await interaction.response.defer(ephemeral=False, thinking=True)
+    job_id = uuid.uuid4().hex
     try:
-        await dispatch_subtitle_extraction(magnet_link, dil, format.value, interaction.channel_id)
-        await interaction.followup.send(
-            f"Altyazı ayıklama başladı. Dil: **{dil.strip().lower() or 'tur'}** · Tür: **{format.name}**. "
-            "İş bitince dosya bu kanala doğrudan gönderilecek.",
-            ephemeral=False,
+        status_message = await interaction.edit_original_response(
+            content="**UBAgen ayıklıyor**\\nVideo adı: video\\nDurum: İstek kuyruğa gönderiliyor..."
+        )
+        await dispatch_subtitle_extraction(
+            magnet_link, dil, format.value, interaction.channel_id, status_message.id, job_id
+        )
+        await interaction.edit_original_response(
+            content=f"**UBAgen ayıklıyor**\\nVideo adı: video\\nDurum: Torrent indirme bilgisi bekleniyor..."
         )
     except HTTPException as exc:
-        await interaction.followup.send(str(exc.detail), ephemeral=False)
+        await interaction.edit_original_response(content=f"❌ Altyazı işi başlatılamadı: {str(exc.detail)[:1700]}")
+    except Exception as exc:
+        log.exception("Subtitle request failed")
+        await interaction.edit_original_response(content=f"❌ Altyazı işi başlatılamadı: {type(exc).__name__}")
 
 @tree.command(name="stats", description="Bot ve servis durumunu göster")
 async def stats(interaction: discord.Interaction):
@@ -299,6 +309,39 @@ async def discord_mode(interaction: discord.Interaction, mode: app_commands.Choi
         ephemeral=False,
     )
 
+
+
+@app.post("/api/subtitle-progress")
+async def subtitle_progress(payload: dict, x_subtitle_callback_secret: Optional[str] = Header(default=None)):
+    """Authenticated callback from GitHub Actions; edits only the requested job's status message."""
+    if not SUBTITLE_CALLBACK_SECRET:
+        raise HTTPException(status_code=503, detail="SUBTITLE_CALLBACK_SECRET Render ortamında ayarlanmamış.")
+    if not x_subtitle_callback_secret or not hmac.compare_digest(x_subtitle_callback_secret, SUBTITLE_CALLBACK_SECRET):
+        raise HTTPException(status_code=401, detail="Geçersiz callback yetkisi.")
+    channel_id = str(payload.get("channel_id", "")).strip()
+    message_id = str(payload.get("message_id", "")).strip()
+    job_id = str(payload.get("job_id", "")).strip()
+    content = str(payload.get("content", "")).strip()
+    if not (channel_id.isdigit() and message_id.isdigit() and job_id and content):
+        raise HTTPException(status_code=400, detail="Callback alanları eksik veya geçersiz.")
+    content = content[:1900]
+    if not bot.is_ready():
+        raise HTTPException(status_code=503, detail="Discord botu şu anda bağlı değil.")
+    try:
+        channel = bot.get_channel(int(channel_id))
+        if channel is None:
+            channel = await bot.fetch_channel(int(channel_id))
+        message = await channel.fetch_message(int(message_id))
+        # Callback content is limited to the request's message and does not create new messages.
+        await message.edit(content=content)
+    except discord.NotFound:
+        raise HTTPException(status_code=404, detail="İlerleme mesajı bulunamadı.")
+    except discord.Forbidden:
+        raise HTTPException(status_code=403, detail="Botun bu kanaldaki mesajı düzenleme izni yok.")
+    except Exception as exc:
+        log.exception("Subtitle callback could not edit status message")
+        raise HTTPException(status_code=502, detail=f"Mesaj güncellenemedi: {type(exc).__name__}")
+    return {"ok": True, "job_id": job_id}
 
 @app.get("/health")
 async def health():
