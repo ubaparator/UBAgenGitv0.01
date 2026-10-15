@@ -28,7 +28,7 @@ on:
         type: string
 
 permissions:
-  contents: read
+  contents: write
 
 concurrency:
   group: subtitle-${{ github.run_id }}
@@ -43,6 +43,10 @@ jobs:
       TARGET_LANG: ${{ github.event.client_payload.target_lang || inputs.target_lang || 'tur' }}
       SUBTITLE_FORMAT: ${{ github.event.client_payload.subtitle_format || inputs.subtitle_format || 'srt' }}
       DISCORD_CHANNEL_ID: ${{ github.event.client_payload.discord_channel_id || inputs.discord_channel_id || '' }}
+      STATUS_MESSAGE_ID: ${{ github.event.client_payload.status_message_id || '' }}
+      SUBTITLE_JOB_ID: ${{ github.event.client_payload.job_id || github.run_id }}
+      SUBTITLE_CALLBACK_URL: ${{ secrets.SUBTITLE_CALLBACK_URL || 'https://ubagen-github-bridge.onrender.com/api/subtitle-progress' }}
+      SUBTITLE_CALLBACK_SECRET: ${{ secrets.SUBTITLE_CALLBACK_SECRET }}
     steps:
       - name: Install aria2 and FFmpeg
         run: |
@@ -70,7 +74,59 @@ jobs:
           curl -fsSL --retry 3 https://raw.githubusercontent.com/ngosang/trackerslist/master/trackers_best.txt -o trackers.txt
           TRACKERS="$(grep -v '^$' trackers.txt | paste -sd, -)"
           if [ -z "$TRACKERS" ]; then echo 'Could not load tracker list'; exit 1; fi
-          timeout 4h aria2c --dir=download_temp --seed-time=0 --max-connection-per-server=16 --split=16 --enable-dht=true --bt-max-peers=200 --bt-tracker="$TRACKERS" --summary-interval=15 "$MAGNET_LINK"
+          export TRACKERS
+          python3 - <<'PY'
+          import json, os, re, subprocess, sys, time, urllib.request, urllib.error
+          def report(content):
+              channel = os.environ.get('DISCORD_CHANNEL_ID', '')
+              message = os.environ.get('STATUS_MESSAGE_ID', '')
+              secret = os.environ.get('SUBTITLE_CALLBACK_SECRET', '')
+              url = os.environ.get('SUBTITLE_CALLBACK_URL', '')
+              if not (channel.isdigit() and message.isdigit() and secret and url):
+                  return
+              body = json.dumps({'job_id': os.environ.get('SUBTITLE_JOB_ID', ''), 'channel_id': channel, 'message_id': message, 'content': content}).encode()
+              req = urllib.request.Request(url, data=body, headers={'Content-Type':'application/json','X-Subtitle-Callback-Secret':secret}, method='POST')
+              try:
+                  with urllib.request.urlopen(req, timeout=8) as response:
+                      if response.status >= 300: print('Progress callback HTTP', response.status)
+              except Exception as exc:
+                  print('Progress callback unavailable:', type(exc).__name__)
+          trackers = os.environ.get('TRACKERS', '')
+          cmd = ['timeout','4h','stdbuf','-oL','-eL','aria2c','--dir=download_temp','--seed-time=0','--max-connection-per-server=16','--split=16','--enable-dht=true','--bt-max-peers=200','--bt-tracker='+trackers,'--summary-interval=5',os.environ['MAGNET_LINK']]
+          report('**UBAgen ayıklıyor**\\nVideo adı: video\\nİndirme başlıyor...')
+          proc = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True, bufsize=1)
+          last_report = 0
+          last_status = ''
+          percent_re = re.compile(r'([0-9]+(?:\\.[0-9]+)?)%')
+          dl_re = re.compile(r'DL:([^\\s\\]]+)')
+          eta_re = re.compile(r'ETA:([^\\s\\]]+)')
+          try:
+              for line in proc.stdout:
+                  print(line, end='')
+                  now = time.monotonic()
+                  if now - last_report < 8: continue
+                  percent = percent_re.search(line)
+                  if not percent: continue
+                  pct = max(0, min(100, int(float(percent.group(1)))))
+                  dl = dl_re.search(line)
+                  eta = eta_re.search(line)
+                  dl_text = dl.group(1) if dl else 'hesaplanıyor'
+                  eta_text = eta.group(1) if eta else 'hesaplanıyor'
+                  bar = '█' * (pct // 10) + '░' * (10 - pct // 10)
+                  status = f'**UBAgen ayıklıyor**\\nVideo adı: video\\nİndirme: %{pct}\\nETA: {eta_text}\\nDL: {dl_text}\\n{bar}'
+                  if status != last_status:
+                      report(status)
+                      last_status = status
+                      last_report = now
+              code = proc.wait()
+          except Exception:
+              proc.kill()
+              raise
+          if code:
+              report('❌ **UBAgen ayıklama başarısız**\\nTorrent indirmesi hata koduyla tamamlandı. Workflow günlüklerini kontrol edin.')
+              sys.exit(code)
+          report('**UBAgen ayıklıyor**\\nVideo adı: video\\n%100 indi, ayıklanıyor...')
+          PY
 
       - name: Extract and clean subtitle
         shell: bash
@@ -120,51 +176,105 @@ jobs:
           if-no-files-found: error
           retention-days: 1
 
-      - name: Send subtitle file as a Discord attachment (no links)
+      - name: Send subtitle file as a Discord attachment
+        id: discord_delivery
         if: success()
         env:
           DISCORD_BOT_TOKEN: ${{ secrets.DISCORD_BOT_TOKEN }}
         shell: bash
         run: |
-          set -euo pipefail
-          if [ -z "${DISCORD_BOT_TOKEN:-}" ]; then
-            echo "::error::Cannot attach the subtitle: repository secret DISCORD_BOT_TOKEN is missing. Add it in Settings > Secrets and variables > Actions."
-            exit 1
-          fi
-          if [ -z "${DISCORD_CHANNEL_ID:-}" ]; then
-            echo "::error::Cannot attach the subtitle: Discord channel ID was not passed to this workflow."
-            exit 1
-          fi
+          set -uo pipefail
           OUTPUT="$(find . -maxdepth 1 -type f -name 'extracted_sub_*.*' -print -quit)"
           if [ -z "$OUTPUT" ]; then
-            echo "::error::Cannot attach the subtitle: extracted output file was not found."
-            exit 1
+            echo "No extracted subtitle file found." >&2
+            echo "sent=false" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          if [ -z "${DISCORD_BOT_TOKEN:-}" ] || [ -z "${DISCORD_CHANNEL_ID:-}" ]; then
+            echo "Discord attachment unavailable: token or channel ID missing; using direct download fallback."
+            echo "sent=false" >> "$GITHUB_OUTPUT"
+            exit 0
           fi
           python3 - "$OUTPUT" <<'PY'
           import json, os, sys
-          output = sys.argv[1]
           with open('discord_payload.json', 'w', encoding='utf-8') as f:
-              json.dump({'content': f'✅ Altyazı dosyan hazır: **{os.path.basename(output)}**'}, f, ensure_ascii=False)
+              json.dump({'content': f'✅ Altyazı dosyan hazır: **{os.path.basename(sys.argv[1])}**'}, f, ensure_ascii=False)
           PY
           HTTP_CODE="$(curl --silent --show-error --output discord_response.json --write-out '%{http_code}' \
             --request POST \
             --header "Authorization: Bot ${DISCORD_BOT_TOKEN}" \
             --form "payload_json=$(cat discord_payload.json)" \
             --form "files[0]=@$OUTPUT;type=application/octet-stream" \
-            "https://discord.com/api/v10/channels/${DISCORD_CHANNEL_ID}/messages")"
-          if [ "$HTTP_CODE" -lt 200 ] || [ "$HTTP_CODE" -ge 300 ]; then
-            echo "::error::Discord rejected the actual file attachment (HTTP $HTTP_CODE). Check bot channel permissions and Discord upload-size limits."
-            python3 - <<'PY'
-          import json
-          try:
-              data = json.load(open('discord_response.json', encoding='utf-8'))
-              print(json.dumps(data, ensure_ascii=False)[:1500])
-          except Exception:
-              print('Discord returned a non-JSON error response.')
-          PY
+            "https://discord.com/api/v10/channels/${DISCORD_CHANNEL_ID}/messages" || true)"
+          if [[ "$HTTP_CODE" =~ ^2[0-9][0-9]$ ]]; then
+            echo "Discord accepted the subtitle attachment."
+            echo "sent=true" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          echo "Discord attachment failed (HTTP ${HTTP_CODE:-unknown}); direct-file fallback will be attempted."
+          cat discord_response.json 2>/dev/null | head -c 700 || true
+          echo "sent=false" >> "$GITHUB_OUTPUT"
+
+      - name: Publish direct subtitle download as a Release asset
+        id: direct_download
+        if: success() && steps.discord_delivery.outputs.sent != 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          OUTPUT="$(find . -maxdepth 1 -type f -name 'extracted_sub_*.*' -print -quit)"
+          if [ -z "$OUTPUT" ] || [ ! -s "$OUTPUT" ]; then
+            echo "::error::Subtitle output is missing or empty."
             exit 1
           fi
-          echo "Discord accepted the subtitle as a file attachment. No download link was sent."
+          TAG="subtitle-download-${GITHUB_RUN_ID}"
+          gh release create "$TAG" "$OUTPUT" --repo "$GITHUB_REPOSITORY" \
+            --title "Temporary subtitle download ${GITHUB_RUN_ID}" \
+            --notes "Temporary direct subtitle download. Automated cleanup removes this release after 48 hours."
+          URL="https://github.com/${GITHUB_REPOSITORY}/releases/download/${TAG}/$(basename "$OUTPUT")"
+          echo "url=$URL" >> "$GITHUB_OUTPUT"
+          echo "Published direct file URL (not a ZIP): $URL"
+
+      - name: Update status message with final result
+        if: always()
+        env:
+          SUBTITLE_CALLBACK_URL: ${{ secrets.SUBTITLE_CALLBACK_URL || 'https://ubagen-github-bridge.onrender.com/api/subtitle-progress' }}
+          SUBTITLE_CALLBACK_SECRET: ${{ secrets.SUBTITLE_CALLBACK_SECRET }}
+          DISCORD_CHANNEL_ID: ${{ env.DISCORD_CHANNEL_ID }}
+          STATUS_MESSAGE_ID: ${{ env.STATUS_MESSAGE_ID }}
+          SUBTITLE_JOB_ID: ${{ env.SUBTITLE_JOB_ID }}
+          DIRECT_URL: ${{ steps.direct_download.outputs.url }}
+          ATTACHMENT_SENT: ${{ steps.discord_delivery.outputs.sent }}
+          JOB_STATUS: ${{ job.status }}
+        shell: bash
+        run: |
+          python3 - <<'PY'
+          import json, os, urllib.request
+          channel=os.getenv('DISCORD_CHANNEL_ID','')
+          message=os.getenv('STATUS_MESSAGE_ID','')
+          secret=os.getenv('SUBTITLE_CALLBACK_SECRET','')
+          url=os.getenv('SUBTITLE_CALLBACK_URL','')
+          if not (channel.isdigit() and message.isdigit() and secret and url):
+              print('Final callback skipped: callback settings or message IDs are unavailable.')
+              raise SystemExit(0)
+          if os.getenv('JOB_STATUS') != 'success':
+              content='❌ **UBAgen ayıklama başarısız**\\nİşlem tamamlanamadı. GitHub Actions günlüklerini kontrol edin.'
+          elif os.getenv('ATTACHMENT_SENT') == 'true':
+              content='✅ **UBAgen ayıklama tamamlandı**\\nAltyazı dosyası bu kanala eklendi.'
+          else:
+              direct=os.getenv('DIRECT_URL','')
+              if not direct.startswith('https://github.com/'):
+                  content='❌ **UBAgen ayıklama tamamlandı ancak dosya teslim edilemedi.**\\nDoğrudan indirme bağlantısı oluşturulamadı.'
+              else:
+                  content='✅ **UBAgen ayıklama tamamlandı**\\n[Altyazıyı doğrudan indir (ZIP değil)]('+direct+')\\nBağlantı geçicidir; 48 saat içinde kaldırılır.'
+          body=json.dumps({'job_id':os.getenv('SUBTITLE_JOB_ID',''),'channel_id':channel,'message_id':message,'content':content}).encode()
+          req=urllib.request.Request(url,data=body,headers={'Content-Type':'application/json','X-Subtitle-Callback-Secret':secret},method='POST')
+          try:
+              with urllib.request.urlopen(req,timeout=10) as r: print('Final status callback HTTP',r.status)
+          except Exception as exc:
+              print('Final status callback failed:',type(exc).__name__)
+          PY
 
       - name: Report artifact location
         if: always()
