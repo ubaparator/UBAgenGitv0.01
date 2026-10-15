@@ -131,7 +131,7 @@ async def dispatch_subtitle_extraction(magnet_link: str, target_lang: str) -> di
         raise HTTPException(status_code=503, detail=LAST_ERROR)
     magnet_link = magnet_link.strip()
     target_lang = (target_lang or "tur").strip().lower() or "tur"
-    if not magnet_link.startswith("magnet:?") or len(magnet_link) > 4000 or "\\n" in magnet_link or "\\r" in magnet_link:
+    if not magnet_link.startswith("magnet:?") or len(magnet_link) > 4000 or "\n" in magnet_link or "\r" in magnet_link:
         raise HTTPException(status_code=400, detail="Geçerli bir magnet bağlantısı girilmeli (magnet:? ile başlamalı).")
     import re
     if not re.fullmatch(r"[a-z]{3}", target_lang):
@@ -270,11 +270,30 @@ async def discord_mode(interaction: discord.Interaction, mode: app_commands.Choi
 
 @app.get("/health")
 async def health():
+    stopping = getattr(app.state, "stopping", False)
+    task_failed = bot_task is not None and bot_task.done() and not stopping
+    # Render checks this endpoint. A dead Discord background task must not look
+    # healthy merely because FastAPI is still serving HTTP requests.
+    # A rejected token is configuration trouble, not something a restart fixes.
+    token_rejected = "401 Unauthorized" in LAST_ERROR
+    if task_failed and not token_rejected:
+        return JSONResponse(
+            status_code=503,
+            content={
+                "ok": False,
+                "service": "ubagen-github-bridge",
+                "discord_ready": False,
+                "discord_task_running": False,
+                "uptime_seconds": int(time.time() - STARTED_AT),
+                "accepting_jobs": ACCEPTING_JOBS,
+            },
+        )
     return {
         "ok": True,
         "service": "ubagen-github-bridge",
         "discord_ready": bot.is_ready(),
         "discord_user_id": str(bot.user.id) if bot.user else None,
+        "discord_task_running": bot_task is not None and not bot_task.done(),
         "uptime_seconds": int(time.time() - STARTED_AT),
         "accepting_jobs": ACCEPTING_JOBS,
     }
