@@ -6,7 +6,7 @@ import yaml
 
 
 ROOT = Path(__file__).resolve().parents[1]
-HEREDOC_START = re.compile(r"^\\s*python3(?:\\s+-\\s+[^<]*)?\\s+<<'PY'\\s*$")
+HEREDOC_START = re.compile(r"^\s*python3\b.*<<'PY'\s*$")
 
 
 class WorkflowSyntaxTests(unittest.TestCase):
@@ -38,7 +38,7 @@ class WorkflowSyntaxTests(unittest.TestCase):
                         while end < len(lines) and lines[end].strip() != "PY":
                             end += 1
                         self.assertLess(end, len(lines), f"Unclosed Python heredoc in {path.name}/{job_name}/step {index + 1}")
-                        source = "\\n".join(lines[start:end]) + "\\n"
+                        source = "\n".join(lines[start:end]) + "\n"
                         compile(source, f"{path.name}:{job_name}:step-{index + 1}", "exec")
                         checked += 1
                         i = end + 1
