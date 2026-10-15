@@ -313,34 +313,52 @@ async def discord_mode(interaction: discord.Interaction, mode: app_commands.Choi
 
 @app.post("/api/subtitle-progress")
 async def subtitle_progress(payload: dict, x_subtitle_callback_secret: Optional[str] = Header(default=None)):
-    """Authenticated callback from GitHub Actions; edits only the requested job's status message."""
-    if not SUBTITLE_CALLBACK_SECRET:
-        raise HTTPException(status_code=503, detail="SUBTITLE_CALLBACK_SECRET Render ortamında ayarlanmamış.")
-    if not x_subtitle_callback_secret or not hmac.compare_digest(x_subtitle_callback_secret, SUBTITLE_CALLBACK_SECRET):
-        raise HTTPException(status_code=401, detail="Geçersiz callback yetkisi.")
+    """Authenticated GitHub Actions callback that edits only the supplied job status message."""
+    global LAST_ERROR
+    job_id = str(payload.get("job_id", "")).strip()
     channel_id = str(payload.get("channel_id", "")).strip()
     message_id = str(payload.get("message_id", "")).strip()
-    job_id = str(payload.get("job_id", "")).strip()
+    if not SUBTITLE_CALLBACK_SECRET:
+        LAST_ERROR = "SUBTITLE_CALLBACK_SECRET Render ortamında eksik; canlı altyazı ilerleme güncellemeleri kapalı."
+        log.error("Subtitle callback rejected job=%s: callback secret is not configured on Render", job_id or "unknown")
+        raise HTTPException(status_code=503, detail=LAST_ERROR)
+    if not x_subtitle_callback_secret or not hmac.compare_digest(x_subtitle_callback_secret, SUBTITLE_CALLBACK_SECRET):
+        LAST_ERROR = "Altyazı callback kimlik doğrulaması başarısız (401). Render ve GitHub Actions SUBTITLE_CALLBACK_SECRET aynı olmalı."
+        log.error("Subtitle callback authentication failed job=%s channel=%s message=%s", job_id or "unknown", channel_id or "unknown", message_id or "unknown")
+        raise HTTPException(status_code=401, detail=LAST_ERROR)
     content = str(payload.get("content", "")).strip()
     if not (channel_id.isdigit() and message_id.isdigit() and job_id and content):
-        raise HTTPException(status_code=400, detail="Callback alanları eksik veya geçersiz.")
+        LAST_ERROR = "Altyazı callback alanları eksik/geçersiz (400): job_id, channel_id, message_id, content gerekli."
+        log.error("Subtitle callback malformed payload job=%s channel=%s message=%s", job_id or "unknown", channel_id or "unknown", message_id or "unknown")
+        raise HTTPException(status_code=400, detail=LAST_ERROR)
     content = content[:1900]
     if not bot.is_ready():
-        raise HTTPException(status_code=503, detail="Discord botu şu anda bağlı değil.")
+        LAST_ERROR = "Altyazı ilerlemesi güncellenemedi: Discord Gateway bağlı değil (503)."
+        log.error("Subtitle callback cannot edit status: Discord not ready; job=%s channel=%s message=%s", job_id, channel_id, message_id)
+        raise HTTPException(status_code=503, detail=LAST_ERROR)
     try:
         channel = bot.get_channel(int(channel_id))
         if channel is None:
             channel = await bot.fetch_channel(int(channel_id))
         message = await channel.fetch_message(int(message_id))
-        # Callback content is limited to the request's message and does not create new messages.
         await message.edit(content=content)
-    except discord.NotFound:
-        raise HTTPException(status_code=404, detail="İlerleme mesajı bulunamadı.")
-    except discord.Forbidden:
-        raise HTTPException(status_code=403, detail="Botun bu kanaldaki mesajı düzenleme izni yok.")
+        log.info("Subtitle progress updated job=%s channel=%s message=%s chars=%s", job_id, channel_id, message_id, len(content))
+    except discord.NotFound as exc:
+        LAST_ERROR = f"Altyazı ilerleme mesajı bulunamadı (Discord HTTP {getattr(exc, 'status', 404)}, code {getattr(exc, 'code', 'unknown')}); mesaj silinmiş olabilir."
+        log.error("Subtitle callback message/channel not found job=%s channel=%s message=%s discord_code=%s", job_id, channel_id, message_id, getattr(exc, "code", "unknown"))
+        raise HTTPException(status_code=404, detail=LAST_ERROR)
+    except discord.Forbidden as exc:
+        LAST_ERROR = f"Botun ilerleme mesajına erişim/düzenleme izni yok (Discord HTTP {getattr(exc, 'status', 403)}, code {getattr(exc, 'code', 'unknown')}). Kanal izinlerini ve doğru bot tokenını kontrol et."
+        log.error("Subtitle callback forbidden job=%s channel=%s message=%s discord_code=%s", job_id, channel_id, message_id, getattr(exc, "code", "unknown"))
+        raise HTTPException(status_code=403, detail=LAST_ERROR)
+    except discord.HTTPException as exc:
+        LAST_ERROR = f"Discord ilerleme güncelleme hatası: HTTP {getattr(exc, 'status', 'unknown')}, code {getattr(exc, 'code', 'unknown')}."
+        log.exception("Subtitle callback Discord HTTP error job=%s channel=%s message=%s", job_id, channel_id, message_id)
+        raise HTTPException(status_code=502, detail=LAST_ERROR)
     except Exception as exc:
-        log.exception("Subtitle callback could not edit status message")
-        raise HTTPException(status_code=502, detail=f"Mesaj güncellenemedi: {type(exc).__name__}")
+        LAST_ERROR = f"Altyazı callback hatası: {type(exc).__name__}: {str(exc)[:250]}"
+        log.exception("Subtitle callback could not edit status job=%s channel=%s message=%s", job_id, channel_id, message_id)
+        raise HTTPException(status_code=502, detail=LAST_ERROR)
     return {"ok": True, "job_id": job_id}
 
 @app.get("/health")
