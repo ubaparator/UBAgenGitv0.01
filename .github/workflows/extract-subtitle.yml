@@ -46,7 +46,7 @@ jobs:
       STATUS_MESSAGE_ID: ${{ github.event.client_payload.status_message_id || '' }}
       SUBTITLE_JOB_ID: ${{ github.event.client_payload.job_id || github.run_id }}
       SUBTITLE_CALLBACK_URL: ${{ secrets.SUBTITLE_CALLBACK_URL || 'https://ubagen-github-bridge.onrender.com/api/subtitle-progress' }}
-      SUBTITLE_CALLBACK_SECRET: ${{ secrets.SUBTITLE_CALLBACK_SECRET }}
+      SUBTITLE_CALLBACK_SECRET: ${{ secrets.SUBTITLE_CALLBACK_SECRET || secrets.DISCORD_BOT_TOKEN }}
       WORKFLOW_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
     steps:
       - name: Install aria2 and FFmpeg
