@@ -128,7 +128,7 @@ button{background:var(--accent);color:#06130c;font-weight:800;border:0;margin-to
       help.textContent = "Davet bağlantısı için önce botun Discord kimliğinin servisten alınması gerekiyor.";
       return;
     }
-    button.href = "https://discord.com/oauth2/authorize?client_id=" + encodeURIComponent(clientId) + "&scope=bot%20applications.commands&permissions=0";
+    button.href = "https://discord.com/oauth2/authorize?client_id=" + encodeURIComponent(clientId) + "&scope=bot%20applications.commands&permissions=8";
     button.setAttribute("aria-disabled", "false");
     button.title = "UBAgen botunu bir Discord sunucusuna davet et.";
     help.textContent = "Davet ekranında botu eklemek istediğin sunucuyu seç. Bunun için o sunucuda sunucuyu yönetme yetkisi gerekir.";
