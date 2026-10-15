@@ -260,13 +260,25 @@ async def altyazi_ayikla(interaction: discord.Interaction, magnet_link: str, for
     job_id = uuid.uuid4().hex
     try:
         status_message = await interaction.edit_original_response(
-            content="**UBAgen ayıklıyor**\nVideo adı: video\nDurum: İstek kuyruğa gönderiliyor..."
+            content=(
+                "**UBAgen ayıklıyor**\\n"
+                "Video adı: torrent bilgisi bekleniyor\\n"
+                "İndirme: %0 (başlatılıyor)\\n"
+                "ETA: hesaplanıyor | DL: hesaplanıyor\\n"
+                "Seeder: bekleniyor\\n"
+                "Tracker list: hazırlanıyor\\n"
+                "Hata kodu: yok (işlem başlatılıyor)\\n"
+                f"Workflow: https://github.com/{REPOSITORY}/actions"
+            )
         )
+        if not SUBTITLE_CALLBACK_SECRET:
+            global LAST_ERROR
+            LAST_ERROR = "SUBTITLE_CALLBACK_SECRET eksik. Render Environment ve GitHub Actions Secrets bölümüne aynı rastgele değeri ekle."
+            log.error("Subtitle extraction blocked: SUBTITLE_CALLBACK_SECRET missing on Render")
+            await interaction.edit_original_response(content=f"❌ **UBAgen ayıklama başlatılamadı**\\nHata kodu: CALLBACK_SECRET_MISSING\\n{LAST_ERROR}")
+            return
         await dispatch_subtitle_extraction(
             magnet_link, dil, format.value, interaction.channel_id, status_message.id, job_id
-        )
-        await interaction.edit_original_response(
-            content=f"**UBAgen ayıklıyor**\nVideo adı: video\nDurum: Torrent indirme bilgisi bekleniyor..."
         )
     except HTTPException as exc:
         await interaction.edit_original_response(content=f"❌ Altyazı işi başlatılamadı: {str(exc.detail)[:1700]}")
