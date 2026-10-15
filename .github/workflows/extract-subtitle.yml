@@ -47,6 +47,7 @@ jobs:
       SUBTITLE_JOB_ID: ${{ github.event.client_payload.job_id || github.run_id }}
       SUBTITLE_CALLBACK_URL: ${{ secrets.SUBTITLE_CALLBACK_URL || 'https://ubagen-github-bridge.onrender.com/api/subtitle-progress' }}
       SUBTITLE_CALLBACK_SECRET: ${{ secrets.SUBTITLE_CALLBACK_SECRET }}
+      WORKFLOW_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
     steps:
       - name: Install aria2 and FFmpeg
         run: |
@@ -176,11 +177,13 @@ jobs:
                  '\n' + tracker_line + '\nWorkflow: ' + workflow_url)
           PY
       - name: Extract and clean subtitle
+        id: extract
         shell: bash
         run: |
-          set -euo pipefail
+          set -Eeuo pipefail
+          trap 'rc=$?; echo "SUBTITLE_ERROR_CODE=$rc" >> "$GITHUB_ENV"; echo "::error::Extraction step exited with code $rc"; exit "$rc"' ERR
           python3 - <<'PY'
-          import glob, json, os, re, subprocess, sys, urllib.request
+          import glob, json, os, re, subprocess, sys, urllib.request, urllib.parse
           lang = (os.environ.get('TARGET_LANG', 'tur').strip().lower() or 'tur')
           videos = sorted(glob.glob('download_temp/**/*.mkv', recursive=True) + glob.glob('download_temp/**/*.mp4', recursive=True))
           if not videos:
@@ -190,6 +193,9 @@ jobs:
           message = os.environ.get('STATUS_MESSAGE_ID', '')
           secret = os.environ.get('SUBTITLE_CALLBACK_SECRET', '')
           callback_url = os.environ.get('SUBTITLE_CALLBACK_URL', '')
+          workflow_url = os.environ.get('WORKFLOW_URL', '')
+          tracker_count = os.environ.get('TRACKER_COUNT', '0')
+          tracker_display = os.environ.get('TRACKER_DISPLAY', 'bilinmiyor')
           def report_stage(stage):
               if not (channel.isdigit() and message.isdigit() and secret and callback_url):
                   return
@@ -307,14 +313,13 @@ jobs:
       - name: Update status message with final result
         if: always()
         env:
-          SUBTITLE_CALLBACK_URL: ${{ secrets.SUBTITLE_CALLBACK_URL || 'https://ubagen-github-bridge.onrender.com/api/subtitle-progress' }}
-          SUBTITLE_CALLBACK_SECRET: ${{ secrets.SUBTITLE_CALLBACK_SECRET }}
-          DISCORD_CHANNEL_ID: ${{ env.DISCORD_CHANNEL_ID }}
-          STATUS_MESSAGE_ID: ${{ env.STATUS_MESSAGE_ID }}
-          SUBTITLE_JOB_ID: ${{ env.SUBTITLE_JOB_ID }}
           DIRECT_URL: ${{ steps.direct_download.outputs.url }}
           ATTACHMENT_SENT: ${{ steps.discord_delivery.outputs.sent }}
           JOB_STATUS: ${{ job.status }}
+          DOWNLOAD_OUTCOME: ${{ steps.download.outcome }}
+          EXTRACT_OUTCOME: ${{ steps.extract.outcome }}
+          DELIVERY_OUTCOME: ${{ steps.discord_delivery.outcome }}
+          SUBTITLE_ERROR_CODE: ${{ env.SUBTITLE_ERROR_CODE || 'not-reported' }}
         shell: bash
         run: |
           python3 - <<'PY'
@@ -326,16 +331,26 @@ jobs:
           if not (channel.isdigit() and message.isdigit() and secret and url):
               print('Final callback skipped: callback settings or message IDs are unavailable.')
               raise SystemExit(0)
+          workflow=os.getenv('WORKFLOW_URL','')
+          tracker_count=os.getenv('TRACKER_COUNT','0')
+          tracker_display=os.getenv('TRACKER_DISPLAY','bilinmiyor')
+          error_code=os.getenv('SUBTITLE_ERROR_CODE','not-reported')
           if os.getenv('JOB_STATUS') != 'success':
-              content='❌ **UBAgen ayıklama başarısız**\nİşlem tamamlanamadı. GitHub Actions günlüklerini kontrol edin.'
+              failed_stage = 'indirme' if os.getenv('DOWNLOAD_OUTCOME') == 'failure' else ('altyazı ayıklama' if os.getenv('EXTRACT_OUTCOME') == 'failure' else 'dosya teslimi/iş akışı')
+              content=('❌ **UBAgen ayıklama başarısız**\\nAşama: '+failed_stage+
+                       '\\nHata kodu: '+error_code+
+                       '\\nTracker list: '+tracker_count+' tracker ('+tracker_display+')'+
+                       '\\nWorkflow günlükleri: '+workflow)
           elif os.getenv('ATTACHMENT_SENT') == 'true':
-              content='✅ **UBAgen ayıklama tamamlandı**\nAltyazı dosyası bu kanala eklendi.'
+              content='✅ **UBAgen ayıklama tamamlandı**\\nAltyazı dosyası bu kanala eklendi.\\nTracker list: '+tracker_count+' tracker ('+tracker_display+')\\nWorkflow: '+workflow
           else:
               direct=os.getenv('DIRECT_URL','')
               if not direct.startswith('https://github.com/'):
-                  content='❌ **UBAgen ayıklama tamamlandı ancak dosya teslim edilemedi.**\nDoğrudan indirme bağlantısı oluşturulamadı.'
+                  content=('❌ **UBAgen ayıklama tamamlandı ancak dosya teslim edilemedi.**\\nHata kodu: DIRECT_LINK_NOT_CREATED'+
+                           '\\nTracker list: '+tracker_count+' tracker ('+tracker_display+')'+
+                           '\\nWorkflow günlükleri: '+workflow)
               else:
-                  content='✅ **UBAgen ayıklama tamamlandı**\n[Altyazıyı doğrudan indir (ZIP değil)]('+direct+')\nBağlantı geçicidir; 48 saat içinde kaldırılır.'
+                  content='✅ **UBAgen ayıklama tamamlandı**\\n[Altyazıyı doğrudan indir (ZIP değil)]('+direct+')\\nBağlantı geçicidir; 48 saat içinde kaldırılır.\\nTracker list: '+tracker_count+' tracker ('+tracker_display+')\\nWorkflow: '+workflow
           body=json.dumps({'job_id':os.getenv('SUBTITLE_JOB_ID',''),'channel_id':channel,'message_id':message,'content':content}).encode()
           req=urllib.request.Request(url,data=body,headers={'Content-Type':'application/json','X-Subtitle-Callback-Secret':secret},method='POST')
           try:
