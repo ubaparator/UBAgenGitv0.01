@@ -54,80 +54,127 @@ jobs:
           sudo apt-get install -y aria2 ffmpeg curl
 
       - name: Validate request and download torrent
+        id: download
         shell: bash
         run: |
-          set -euo pipefail
+          set -Eeuo pipefail
+          trap 'rc=$?; echo "SUBTITLE_ERROR_CODE=$rc" >> "$GITHUB_ENV"; echo "::error::Download/validation step exited with code $rc"; exit "$rc"' ERR
           python3 - <<'PY'
           import os, re, sys
           magnet = os.environ.get('MAGNET_LINK', '').strip()
           lang = os.environ.get('TARGET_LANG', 'tur').strip().lower() or 'tur'
           fmt = os.environ.get('SUBTITLE_FORMAT', 'srt').strip().lower() or 'srt'
           if fmt not in {'srt', 'ass'}:
-              sys.exit('Subtitle format must be srt or ass.')
+              sys.exit('ERROR_CODE=INVALID_FORMAT: Subtitle format must be SRT or ASS.')
           if not magnet.startswith('magnet:?') or len(magnet) > 4000 or '\n' in magnet or '\r' in magnet:
-              sys.exit('Invalid magnet link.')
+              sys.exit('ERROR_CODE=INVALID_MAGNET: Invalid magnet link.')
           if not re.fullmatch(r'[a-z]{3}', lang):
-              sys.exit('Language must be a three-letter code such as tur or eng.')
+              sys.exit('ERROR_CODE=INVALID_LANGUAGE: Language must be a three-letter code such as tur or eng.')
           print('Request validated. Target language:', lang, '| format:', fmt)
           PY
           mkdir -p download_temp
-          curl -fsSL --retry 3 https://raw.githubusercontent.com/ngosang/trackerslist/master/trackers_best.txt -o trackers.txt
-          TRACKERS="$(grep -v '^$' trackers.txt | paste -sd, -)"
-          if [ -z "$TRACKERS" ]; then echo 'Could not load tracker list'; exit 1; fi
+          curl --fail --silent --show-error --location --retry 3 --retry-all-errors --connect-timeout 15 --max-time 60 \
+            https://raw.githubusercontent.com/ngosang/trackerslist/master/trackers_best.txt -o trackers.txt
+          TRACKERS="$(grep -E '^(udp|https?)://' trackers.txt | sort -u | paste -sd, -)"
+          if [ -z "$TRACKERS" ]; then
+            echo "ERROR_CODE=TRACKER_LIST_EMPTY: tracker source returned no usable trackers." >&2
+            exit 21
+          fi
           export TRACKERS
+          export WORKFLOW_URL="\${{ github.server_url }}/\${{ github.repository }}/actions/runs/\${{ github.run_id }}"
           python3 - <<'PY'
-          import json, os, re, subprocess, sys, time, urllib.request, urllib.error
+          import json, os, re, subprocess, sys, time, urllib.request, urllib.parse
           def report(content):
               channel = os.environ.get('DISCORD_CHANNEL_ID', '')
               message = os.environ.get('STATUS_MESSAGE_ID', '')
               secret = os.environ.get('SUBTITLE_CALLBACK_SECRET', '')
               url = os.environ.get('SUBTITLE_CALLBACK_URL', '')
               if not (channel.isdigit() and message.isdigit() and secret and url):
-                  return
+                  print('CALLBACK_CONFIG_ERROR: missing channel/message/secret/url; live Discord updates are disabled.')
+                  return False
               body = json.dumps({'job_id': os.environ.get('SUBTITLE_JOB_ID', ''), 'channel_id': channel, 'message_id': message, 'content': content}).encode()
               req = urllib.request.Request(url, data=body, headers={'Content-Type':'application/json','X-Subtitle-Callback-Secret':secret}, method='POST')
               try:
-                  with urllib.request.urlopen(req, timeout=8) as response:
-                      if response.status >= 300: print('Progress callback HTTP', response.status)
+                  with urllib.request.urlopen(req, timeout=10) as response:
+                      print('PROGRESS_CALLBACK_HTTP=' + str(response.status))
+                      return response.status < 300
               except Exception as exc:
-                  print('Progress callback unavailable:', type(exc).__name__)
-          trackers = os.environ.get('TRACKERS', '')
-          cmd = ['timeout','4h','stdbuf','-oL','-eL','aria2c','--dir=download_temp','--seed-time=0','--max-connection-per-server=16','--split=16','--enable-dht=true','--bt-max-peers=200','--bt-tracker='+trackers,'--summary-interval=5',os.environ['MAGNET_LINK']]
-          report('**UBAgen ayıklıyor**\nVideo adı: video\nİndirme başlıyor...')
-          proc = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True, bufsize=1)
-          last_report = 0
+                  print('PROGRESS_CALLBACK_ERROR=' + type(exc).__name__ + ': ' + str(exc)[:300])
+                  return False
+          tracker_urls = [x.strip() for x in os.environ.get('TRACKERS','').split(',') if x.strip()]
+          tracker_hosts = []
+          for item in tracker_urls[:4]:
+              parsed = urllib.parse.urlparse(item)
+              tracker_hosts.append(parsed.netloc or item[:60])
+          tracker_line = f'Tracker list: {len(tracker_urls)} tracker yüklendi (' + (', '.join(tracker_hosts) if tracker_hosts else 'yok') + ')'
+          workflow_url = os.environ.get('WORKFLOW_URL','')
+          video_name = 'torrent içinden bekleniyor'
+          report('**UBAgen ayıklıyor**\nVideo adı: ' + video_name + '\n' + tracker_line + '\nWorkflow: ' + workflow_url + '\nAşama: Torrent bağlantısı kuruluyor...')
+          cmd = ['timeout','4h','stdbuf','-o0','-e0','aria2c','--console-log-level=notice','--show-console-readout=true','--dir=download_temp','--seed-time=0','--max-connection-per-server=16','--split=16','--enable-dht=true','--bt-max-peers=200','--bt-tracker='+os.environ['TRACKERS'],'--summary-interval=5',os.environ['MAGNET_LINK']]
+          proc = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, bufsize=0)
+          last_report = 0.0
           last_status = ''
-          percent_re = re.compile(r'([0-9]+(?:\.[0-9]+)?)%')
-          dl_re = re.compile(r'DL:([^\s\]]+)')
-          eta_re = re.compile(r'ETA:([^\s\]]+)')
+          buffer = ''
+          percent_re = re.compile(r'\((\d+(?:\.\d+)?)%\)|(?<![\w.])(\d+(?:\.\d+)?)%')
+          dl_re = re.compile(r'\bDL:([^\s\]]+)')
+          eta_re = re.compile(r'\bETA:([^\s\]]+)')
+          seed_re = re.compile(r'\bSEED:(\d+)')
+          peer_re = re.compile(r'\b(?:CN|PEERS?):(\d+)')
+          size_re = re.compile(r'(\d+(?:\.\d+)?\s*[KMGTP]?i?B)/(\d+(?:\.\d+)?\s*[KMGTP]?i?B)')
+          def consume(line):
+              global last_report, last_status
+              line = line.strip()
+              if not line: return
+              print('ARIA2: ' + line, flush=True)
+              now = time.monotonic()
+              if now - last_report < 4: return
+              match = percent_re.search(line)
+              if not match: return
+              raw_pct = match.group(1) or match.group(2)
+              pct = max(0, min(100, int(float(raw_pct))))
+              dl = dl_re.search(line)
+              eta = eta_re.search(line)
+              seed = seed_re.search(line)
+              peers = peer_re.search(line)
+              size = size_re.search(line)
+              dl_text = (dl.group(1) + '/s') if dl else 'hesaplanıyor'
+              eta_text = eta.group(1) if eta else 'hesaplanıyor'
+              seed_text = seed.group(1) if seed else 'bilinmiyor'
+              peer_text = peers.group(1) if peers else 'bilinmiyor'
+              size_text = f'{size.group(1)} / {size.group(2)}' if size else 'bilinmiyor'
+              bar = '█' * (pct // 10) + '░' * (10 - pct // 10)
+              status = ('**UBAgen ayıklıyor**\nVideo adı: ' + video_name +
+                        f'\nİndirme: %{pct} [{bar}]' +
+                        f'\nETA: {eta_text} | DL: {dl_text}' +
+                        f'\nSeeder: {seed_text} | Bağlantı: {peer_text}' +
+                        f'\nİndirilen: {size_text}' +
+                        '\n' + tracker_line + '\nWorkflow: ' + workflow_url)
+              if status != last_status:
+                  report(status)
+                  last_status = status
+                  last_report = now
           try:
-              for line in proc.stdout:
-                  print(line, end='')
-                  now = time.monotonic()
-                  if now - last_report < 8: continue
-                  percent = percent_re.search(line)
-                  if not percent: continue
-                  pct = max(0, min(100, int(float(percent.group(1)))))
-                  dl = dl_re.search(line)
-                  eta = eta_re.search(line)
-                  dl_text = (dl.group(1) + '/s') if dl else 'hesaplanıyor'
-                  eta_text = eta.group(1) if eta else 'hesaplanıyor'
-                  bar = '█' * (pct // 10) + '░' * (10 - pct // 10)
-                  status = f'**UBAgen ayıklıyor**\nVideo adı: video\nİndirme: %{pct}\nETA: {eta_text}\nDL: {dl_text}\n{bar}'
-                  if status != last_status:
-                      report(status)
-                      last_status = status
-                      last_report = now
+              fd = proc.stdout.fileno()
+              while True:
+                  chunk = os.read(fd, 4096)
+                  if not chunk: break
+                  buffer += chunk.decode('utf-8', errors='replace')
+                  parts = re.split(r'[\r\n]+', buffer)
+                  buffer = parts.pop()
+                  for line in parts: consume(line)
+              if buffer: consume(buffer)
               code = proc.wait()
           except Exception:
               proc.kill()
               raise
           if code:
-              report('❌ **UBAgen ayıklama başarısız**\nTorrent indirmesi hata koduyla tamamlandı. Workflow günlüklerini kontrol edin.')
+              report('❌ **UBAgen ayıklama başarısız**\nAşama: Torrent indirme\nHata kodu: ' + str(code) +
+                     '\n' + tracker_line + '\nWorkflow günlükleri: ' + workflow_url)
               sys.exit(code)
-          report('**UBAgen ayıklıyor**\nVideo adı: video\n%100 indi, ayıklanıyor...')
+          report('**UBAgen ayıklıyor**\nVideo adı: ' + video_name +
+                 '\nİndirme: %100\nAşama: İndirme tamamlandı, dosya adı/altyazı akışı bulunuyor...' +
+                 '\n' + tracker_line + '\nWorkflow: ' + workflow_url)
           PY
-
       - name: Extract and clean subtitle
         shell: bash
         run: |
