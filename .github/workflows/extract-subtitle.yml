@@ -50,7 +50,11 @@ jobs:
       WORKFLOW_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
     steps:
       - name: Install aria2 and FFmpeg
+        id: install
+        shell: bash
         run: |
+          set -Eeuo pipefail
+          trap 'rc=$?; echo "SUBTITLE_ERROR_CODE=$rc" >> "$GITHUB_ENV"; echo "::error::Dependency installation failed with exit code $rc"; exit "$rc"' ERR
           sudo apt-get update -qq
           sudo apt-get install -y aria2 ffmpeg curl
 
@@ -315,7 +319,8 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         shell: bash
         run: |
-          set -euo pipefail
+          set -Eeuo pipefail
+          trap 'rc=$?; echo "SUBTITLE_ERROR_CODE=$rc" >> "$GITHUB_ENV"; echo "::error::Direct download fallback failed with exit code $rc"; exit "$rc"' ERR
           OUTPUT="$(find . -maxdepth 1 -type f -name 'extracted_sub_*.*' -print -quit)"
           if [ -z "$OUTPUT" ] || [ ! -s "$OUTPUT" ]; then
             echo "::error::Subtitle output is missing or empty."
@@ -340,6 +345,7 @@ jobs:
           DIRECT_URL: ${{ steps.direct_download.outputs.url }}
           ATTACHMENT_SENT: ${{ steps.discord_delivery.outputs.sent }}
           JOB_STATUS: ${{ job.status }}
+          INSTALL_OUTCOME: ${{ steps.install.outcome }}
           DOWNLOAD_OUTCOME: ${{ steps.download.outcome }}
           EXTRACT_OUTCOME: ${{ steps.extract.outcome }}
           DELIVERY_OUTCOME: ${{ steps.discord_delivery.outcome }}
@@ -360,12 +366,12 @@ jobs:
           workflow=os.getenv('WORKFLOW_URL','')
           tracker_count=os.getenv('TRACKER_COUNT','0')
           tracker_display=os.getenv('TRACKER_DISPLAY','bilinmiyor')
-          error_code=os.getenv('SUBTITLE_ERROR_CODE','not-reported')
+          error_code=os.getenv('SUBTITLE_ERROR_CODE','ACTIONS_STEP_FAILURE')
           discord_http=os.getenv('DISCORD_HTTP_CODE','not-attempted')
           discord_api_code=os.getenv('DISCORD_API_ERROR_CODE','none')
           discord_api_message=os.getenv('DISCORD_API_ERROR_MESSAGE','')
           if os.getenv('JOB_STATUS') != 'success':
-              failed_stage = 'indirme' if os.getenv('DOWNLOAD_OUTCOME') == 'failure' else ('altyazı ayıklama' if os.getenv('EXTRACT_OUTCOME') == 'failure' else 'dosya teslimi/iş akışı')
+              failed_stage = 'bağımlılık kurulumu' if os.getenv('INSTALL_OUTCOME') == 'failure' else ('indirme' if os.getenv('DOWNLOAD_OUTCOME') == 'failure' else ('altyazı ayıklama' if os.getenv('EXTRACT_OUTCOME') == 'failure' else 'dosya teslimi/iş akışı'))
               content=('❌ **UBAgen ayıklama başarısız**\nAşama: '+failed_stage+
                        '\nHata kodu: '+error_code+
                        '\nTracker list: '+tracker_count+' tracker ('+tracker_display+')'+
